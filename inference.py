@@ -5,7 +5,7 @@ from tqdm import tqdm
 import einops
 import importlib
 import argparse
-import zarr
+import zarr, time
 from pathlib import Path
 from copy import copy
 from ctypes import *
@@ -101,7 +101,6 @@ def get_volume(
     root_dir: str | Path,
     study_name: str,
     mode: str = "denoised",
-    split: str = "train",
     voxel_spacing_str: str = "VoxelSpacing10.000",
 ):
     """
@@ -111,7 +110,6 @@ def get_volume(
     :param root_dir: Base directory (e.g., /path/to/czii-cryo-et-object-identification).
     :param study_name: For example, "TS_5_4".
     :param mode: Which volume mode to load, e.g. "denoised", "isonetcorrected", "wbp", etc.
-    :param split: "train" or "test".
     :param voxel_spacing_str: Typically "VoxelSpacing10.000" from your structure.
     :return: A 3D NumPy array of the volume data.
     """
@@ -119,7 +117,6 @@ def get_volume(
     #   /.../train/static/ExperimentRuns/TS_5_4/VoxelSpacing10.000/denoised.zarr
     zarr_path = os.path.join(
         str(root_dir),
-        split,
         "static",
         "ExperimentRuns",
         study_name,
@@ -520,8 +517,7 @@ def main_inference_entry_point_regular(
     batch_size=1,
     num_workers=0,
     torch_dtype=torch.float16,
-    data_path="./data",
-    split: str = "test",
+    data_path="./data"
 ):
     device_id = int(device_id)
     torch_device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")  
@@ -533,7 +529,7 @@ def main_inference_entry_point_regular(
     models = load_models(cfg, ckpt_fns, device=torch_device, torch_dtype=torch_dtype)
 
     path = Path(data_path)
-    studies_path = path / split / "static" / "ExperimentRuns"
+    studies_path = path / "static" / "ExperimentRuns"
 
     studies = list(sorted(os.listdir(studies_path)))
     print(f"studies\n{studies}")
@@ -546,8 +542,7 @@ def main_inference_entry_point_regular(
         study_volume = get_volume(
             root_dir=path,
             study_name=study_name,
-            mode="denoised",
-            split=split,
+            mode="denoised"
         )
 
         study_sub = predict_volume_regular(
@@ -731,9 +726,11 @@ if __name__ == "__main__":
     print(importlib.import_module(parser_args.config))
     cfg = copy(importlib.import_module(parser_args.config).cfg)  
 
+    start = time.time()
     main_regular(cfg, 
                  checkpoints = parser_args.checkpoints,
                  device_id = parser_args.device,
                  data_path = parser_args.data_folder,
                  output_dir = parser_args.output_dir
                  )
+    print(f'The inference process takes {time.time()-start} s to finish.')

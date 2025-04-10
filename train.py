@@ -7,6 +7,7 @@ import gc
 import argparse
 import torch
 import math
+import time
 try:
     from torch.amp import GradScaler, autocast
 except:
@@ -473,5 +474,8 @@ if __name__ == "__main__":
     cfg.post_process_pipeline = importlib.import_module(cfg.post_process_pipeline).post_process_pipeline
     cfg.calc_metric = importlib.import_module(cfg.metric).calc_metric
     
+    start = time.time()
     result = train(cfg)
+    print(f'The training process takes {time.tiem()-start} s to finish.')
     print(result)
+
