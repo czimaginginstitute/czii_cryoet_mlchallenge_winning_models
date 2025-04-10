@@ -7,7 +7,7 @@ cfg = basic_cfg
 
 # paths
 cfg.name = os.path.basename(__file__).split(".")[0]
-cfg.output_dir = "/hpc/projects/group.czii/kevin.zhao/ml_challenge/winners/output/"
+cfg.output_dir = "./output/"
 
 
 #model

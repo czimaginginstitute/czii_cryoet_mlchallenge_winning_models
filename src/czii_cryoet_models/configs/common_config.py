@@ -85,7 +85,7 @@ cfg.disable_tqdm = False
 
 # paths
 
-cfg.data_folder = '/hpc/projects/group.czii/kevin.zhao/ml_challenge/winners/data/train/static/ExperimentRuns/'
+cfg.data_folder = 'data'
 cfg.train_df = 'train_folded_v1.csv'
 
 
