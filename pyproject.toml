@@ -23,3 +23,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/czimaginginstitute/czii_cryoet_challenge_models"
+
+[tool.setuptools]
+packages = ["czii_cryoet_models"]
+
+[tool.setuptools.package-dir]
+"" = "src"
