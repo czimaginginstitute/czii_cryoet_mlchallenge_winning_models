@@ -114,10 +114,9 @@ def get_volume(
     :return: A 3D NumPy array of the volume data.
     """
     # Example path:
-    #   /.../train/static/ExperimentRuns/TS_5_4/VoxelSpacing10.000/denoised.zarr
+    #   /.../ExperimentRuns/TS_5_4/VoxelSpacing10.000/denoised.zarr
     zarr_path = os.path.join(
         str(root_dir),
-        "static",
         "ExperimentRuns",
         study_name,
         voxel_spacing_str,
@@ -450,51 +449,110 @@ def postprocess_scores_offsets_into_submission(
 
 
 ######### regular torch checkpoints ############
+# def get_random_torch_checkpoints(directory: str):
+#     """
+#     Searches for standard PyTorch checkpoint files (.pt/.pth) in the given directory and returns a random subset.
+
+#     :param directory: Path to the directory containing PyTorch checkpoint files.
+#     :param num_checkpoints: Number of models to select randomly.
+#     :return: List of randomly selected checkpoint paths.
+#     """
+#     # Find all .pt and .pth files in the directory
+#     ckpt_files = glob.glob(f"{directory}/**/*.pt", recursive=True) + glob.glob(f"{directory}/**/*.pth", recursive=True)
+
+#     if not ckpt_files:
+#         raise FileNotFoundError(f"No PyTorch checkpoint files found in {directory}")
+    
+#     return ckpt_files
+
+
+# def load_models(cfg, checkpoint_paths, device, torch_dtype):
+#     """
+#     Loads multiple PyTorch models for ensemble inference.
+    
+#     :param checkpoint_paths: List of paths to .pt or .pth model checkpoints.
+#     :param device: CUDA or CPU device for model loading.
+#     :param torch_dtype: Data type for the models.
+#     :return: List of loaded models.
+#     """
+#     models = []
+    
+#     for ckpt_path in checkpoint_paths:
+#         checkpoint = torch.load(ckpt_path, map_location=device)
+        
+#         if "model" in checkpoint:
+#             model_state_dict = checkpoint["model"]
+#         else:
+#             model_state_dict = checkpoint
+        
+#         Net = importlib.import_module(cfg.model).Net
+#         model = Net(cfg)
+#         model.load_state_dict(model_state_dict)
+#         model.to(device).to(torch_dtype)
+#         model.eval()  # Set to evaluation mode
+#         models.append(model)
+
+#     return models
+
 
 def get_random_torch_checkpoints(directory: str):
     """
-    Searches for standard PyTorch checkpoint files (.pt/.pth) in the given directory and returns a random subset.
-
-    :param directory: Path to the directory containing PyTorch checkpoint files.
-    :param num_checkpoints: Number of models to select randomly.
-    :return: List of randomly selected checkpoint paths.
+    Searches for standard PyTorch and PyTorch Lightning checkpoint files in the given directory.
+    :param directory: Path to the directory containing checkpoint files.
+    :return: List of checkpoint paths.
     """
-    # Find all .pt and .pth files in the directory
-    ckpt_files = glob.glob(f"{directory}/**/*.pt", recursive=True) + glob.glob(f"{directory}/**/*.pth", recursive=True)
+    ckpt_files = (
+        glob.glob(f"{directory}/**/*.pt", recursive=True)
+        + glob.glob(f"{directory}/**/*.pth", recursive=True)
+        + glob.glob(f"{directory}/**/*.ckpt", recursive=True)
+    )
 
     if not ckpt_files:
-        raise FileNotFoundError(f"No PyTorch checkpoint files found in {directory}")
-    
+        raise FileNotFoundError(f"No checkpoint files found in {directory}")
+
     return ckpt_files
 
 
 def load_models(cfg, checkpoint_paths, device, torch_dtype):
     """
-    Loads multiple PyTorch models for ensemble inference.
+    Loads multiple PyTorch or Lightning model checkpoints for ensemble inference.
     
-    :param checkpoint_paths: List of paths to .pt or .pth model checkpoints.
-    :param device: CUDA or CPU device for model loading.
-    :param torch_dtype: Data type for the models.
-    :return: List of loaded models.
+    :param checkpoint_paths: List of checkpoint file paths (.pt/.pth/.ckpt).
+    :param device: Device to load the models onto.
+    :param torch_dtype: Model dtype (e.g., torch.float32 or torch.float16).
+    :return: List of loaded model instances.
     """
     models = []
-    
+
     for ckpt_path in checkpoint_paths:
+        print(f"Loading checkpoint: {ckpt_path}")
         checkpoint = torch.load(ckpt_path, map_location=device)
-        
-        if "model" in checkpoint:
-            model_state_dict = checkpoint["model"]
+
+        # Extract state_dict from Lightning checkpoints
+        if "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        elif "model" in checkpoint:
+            state_dict = checkpoint["model"]
         else:
-            model_state_dict = checkpoint
-        
+            state_dict = checkpoint  # plain PyTorch
+
+        # Remove prefixes like "model." or "net."
+        clean_state_dict = {
+            k.replace("model.", "").replace("net.", ""): v
+            for k, v in state_dict.items()
+        }
+
+        # Dynamically import model
         Net = importlib.import_module(cfg.model).Net
         model = Net(cfg)
-        model.load_state_dict(model_state_dict)
-        model.to(device).to(torch_dtype)
-        model.eval()  # Set to evaluation mode
+
+        model.load_state_dict(clean_state_dict, strict=False)
+        model.to(device).to(dtype=torch_dtype)
+        model.eval()
         models.append(model)
 
     return models
+
 
 
 def main_inference_entry_point_regular(
@@ -517,7 +575,9 @@ def main_inference_entry_point_regular(
     batch_size=1,
     num_workers=0,
     torch_dtype=torch.float16,
-    data_path="./data"
+    data_path="./data",
+    tomogram_list=[],
+    mode = "denoised"
 ):
     device_id = int(device_id)
     torch_device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")  
@@ -529,11 +589,11 @@ def main_inference_entry_point_regular(
     models = load_models(cfg, ckpt_fns, device=torch_device, torch_dtype=torch_dtype)
 
     path = Path(data_path)
-    studies_path = path / "static" / "ExperimentRuns"
-
-    studies = list(sorted(os.listdir(studies_path)))
-    print(f"studies\n{studies}")
-    studies = studies[device_id::world_size]
+    studies_path = path / "ExperimentRuns"
+    studies = tomogram_list if tomogram_list else list(sorted(os.listdir(studies_path)))
+    # Not using distributed inference
+    # print(f"studies\n{studies}")
+    # studies = studies[device_id::world_size]
     print("Process got", len(studies), "to process")
 
     submissions = []
@@ -542,7 +602,7 @@ def main_inference_entry_point_regular(
         study_volume = get_volume(
             root_dir=path,
             study_name=study_name,
-            mode="denoised"
+            mode=mode
         )
 
         study_sub = predict_volume_regular(
@@ -616,6 +676,7 @@ def predict_volume_regular(
 
     for i, model in enumerate(models):
         model = model.eval().to(torch_device)
+        print(model)
         pred = sliding_window_inference4(
             inputs=volume_tensor,
             predictor=model,
@@ -680,6 +741,8 @@ def main_regular(cfg,
                  checkpoints='./checkpoints',
                  data_path="./data",
                  output_dir = './output',
+                 tomogram_list = [],
+                 mode = "denoised"
 
     ):
     submission = main_inference_entry_point_regular(
@@ -697,6 +760,8 @@ def main_regular(cfg,
         # [0.255,0.235,0.16 ,0.255,0.225, 0.5], # LB: 784 V4 OOF Computed CV score: 0.8295528641195601 std: 0.01879723638715648
         device_id=device_id,
         data_path=data_path,
+        tomogram_list = tomogram_list,
+        mode = mode
     )
 
 
@@ -711,7 +776,8 @@ if __name__ == "__main__":
     
     parser.add_argument("-c", "--config", help="config filename")
     parser.add_argument("-d", "--device", type=int, help="config filename")
-    parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for inference")
+    parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for inference. Example:  data_folder/ExperimentRuns/TS_5_4/VoxelSpacing10.000/denoised.zarr")
+    parser.add_argument("-m", "--mode", type=str, default="denoised", help="reconstruction mode")
     parser.add_argument("-p", "--checkpoints", type=str, default="./checkpoints", help="checkpoints folder (multiple checkpoints will create a model soup)")
     parser.add_argument("-D", "--debug", action='store_true', help="debugging True/ False")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="outputs")
@@ -726,11 +792,18 @@ if __name__ == "__main__":
     print(importlib.import_module(parser_args.config))
     cfg = copy(importlib.import_module(parser_args.config).cfg)  
 
+    public = "TS_100_3,TS_101_5,TS_102_2,TS_103_4,TS_103_5,TS_105_5,TS_105_7,TS_106_7,TS_107_1,TS_109_2,TS_109_3,TS_109_5,TS_111_2,TS_112_6,TS_114_4,TS_115_4,TS_115_7,TS_11_7,TS_12_3,TS_12_9,TS_13_9,TS_14_1,TS_14_2,TS_14_4,TS_14_6,TS_15_1,TS_1_2,TS_1_3,TS_1_4,TS_1_5,TS_1_7,TS_1_8,TS_25_6,TS_27_1,TS_27_7,TS_2_3,TS_30_2,TS_31_8,TS_33_4,TS_37_1,TS_37_8,TS_43_9,TS_44_4,TS_45_1,TS_46_8,TS_47_2,TS_47_7,TS_48_5,TS_4_3,TS_52_3,TS_53_7,TS_58_6,TS_58_7,TS_58_9,TS_59_1,TS_59_8,TS_5_2,TS_5_8,TS_60_6,TS_60_7,TS_60_8,TS_63_6,TS_63_7,TS_65_4,TS_65_8,TS_65_9,TS_67_2,TS_67_3,TS_67_6,TS_67_7,TS_68_4,TS_68_7,TS_6_7,TS_70_8,TS_70_9,TS_71_3,TS_71_7,TS_71_8,TS_74_1,TS_74_3,TS_74_8,TS_76_3,TS_76_4,TS_76_8,TS_79_4,TS_80_5,TS_80_8,TS_81_1,TS_81_4,TS_83_1,TS_84_5,TS_84_7,TS_85_1,TS_86_4,TS_86_8,TS_86_9,TS_87_4,TS_87_5,TS_87_6,TS_87_7,TS_88_3,TS_89_2,TS_89_5,TS_90_2,TS_90_3,TS_90_4,TS_91_7,TS_91_9,TS_93_5,TS_93_9,TS_94_3,TS_94_5,TS_94_6,TS_94_7,TS_96_4,TS_96_9,TS_97_7,TS_98_1,TS_98_4,TS_9_2,TS_9_3"
+    public = public.split(",")
+    private = "TS_100_4,TS_100_6,TS_100_7,TS_100_9,TS_101_1,TS_101_4,TS_101_6,TS_101_7,TS_101_9,TS_102_1,TS_102_4,TS_102_7,TS_102_8,TS_103_1,TS_103_2,TS_103_3,TS_103_9,TS_104_1,TS_104_2,TS_104_3,TS_104_4,TS_104_6,TS_104_9,TS_105_2,TS_106_1,TS_106_4,TS_106_5,TS_107_3,TS_107_5,TS_108_1,TS_108_3,TS_108_4,TS_108_6,TS_108_7,TS_108_8,TS_108_9,TS_109_1,TS_109_4,TS_109_6,TS_109_8,TS_109_9,TS_110_2,TS_110_3,TS_110_8,TS_111_1,TS_111_5,TS_111_8,TS_111_9,TS_112_4,TS_112_5,TS_113_4,TS_114_1,TS_114_2,TS_114_3,TS_114_5,TS_115_1,TS_115_3,TS_115_5,TS_115_6,TS_115_8,TS_116_4,TS_116_5,TS_116_6,TS_116_9,TS_117_7,TS_118_7,TS_11_1,TS_11_3,TS_11_9,TS_120_2,TS_12_1,TS_12_2,TS_12_5,TS_13_5,TS_13_8,TS_14_5,TS_14_8,TS_15_2,TS_15_3,TS_15_6,TS_15_7,TS_15_8,TS_15_9,TS_1_1,TS_1_6,TS_1_9,TS_24_3,TS_24_4,TS_24_5,TS_24_6,TS_24_8,TS_25_1,TS_25_2,TS_25_3,TS_25_4,TS_25_5,TS_25_7,TS_25_8,TS_26_1,TS_26_4,TS_26_6,TS_26_7,TS_27_3,TS_27_4,TS_27_5,TS_27_9,TS_28_3,TS_28_5,TS_29_7,TS_29_9,TS_2_2,TS_2_4,TS_2_5,TS_2_6,TS_2_9,TS_30_7,TS_30_9,TS_31_1,TS_31_3,TS_31_6,TS_32_3,TS_32_5,TS_33_7,TS_34_2,TS_34_5,TS_34_7,TS_34_8,TS_35_3,TS_35_6,TS_35_7,TS_35_9,TS_37_2,TS_37_4,TS_37_6,TS_39_1,TS_39_5,TS_39_7,TS_3_3,TS_3_4,TS_3_5,TS_42_7,TS_43_2,TS_43_3,TS_43_5,TS_43_7,TS_44_1,TS_44_2,TS_44_3,TS_44_5,TS_44_7,TS_44_8,TS_44_9,TS_45_2,TS_45_4,TS_45_5,TS_45_6,TS_46_1,TS_46_5,TS_46_9,TS_47_3,TS_47_4,TS_47_6,TS_47_8,TS_48_1,TS_48_2,TS_48_4,TS_48_9,TS_49_2,TS_49_5,TS_49_6,TS_4_4,TS_4_5,TS_4_6,TS_4_7,TS_4_9,TS_52_4,TS_52_5,TS_56_7,TS_58_1,TS_58_8,TS_59_2,TS_59_3,TS_59_4,TS_59_5,TS_59_6,TS_59_7,TS_5_1,TS_5_3,TS_5_5,TS_5_9,TS_60_1,TS_60_2,TS_60_3,TS_60_4,TS_60_5,TS_61_1,TS_61_2,TS_61_4,TS_61_5,TS_61_6,TS_61_7,TS_61_8,TS_62_1,TS_62_2,TS_62_4,TS_62_5,TS_62_7,TS_62_8,TS_63_2,TS_63_3,TS_63_5,TS_63_8,TS_63_9,TS_64_3,TS_64_9,TS_65_2,TS_65_6,TS_67_4,TS_67_8,TS_68_5,TS_68_8,TS_68_9,TS_69_1,TS_69_4,TS_69_5,TS_69_7,TS_69_8,TS_6_1,TS_6_8,TS_6_9,TS_70_1,TS_70_2,TS_70_3,TS_70_4,TS_70_5,TS_70_7,TS_71_2,TS_71_4,TS_71_5,TS_71_9,TS_72_2,TS_72_3,TS_72_7,TS_72_8,TS_73_7,TS_73_8,TS_74_5,TS_75_1,TS_75_2,TS_75_7,TS_76_5,TS_76_6,TS_76_9,TS_77_1,TS_77_2,TS_77_3,TS_77_5,TS_77_6,TS_78_1,TS_78_2,TS_78_4,TS_78_5,TS_78_8,TS_78_9,TS_79_5,TS_79_6,TS_79_9,TS_7_1,TS_7_2,TS_7_4,TS_7_8,TS_80_1,TS_80_6,TS_81_2,TS_81_6,TS_81_8,TS_82_1,TS_82_2,TS_82_3,TS_82_4,TS_82_5,TS_83_3,TS_83_5,TS_83_6,TS_83_8,TS_84_1,TS_84_8,TS_85_2,TS_85_6,TS_85_8,TS_86_1,TS_86_2,TS_86_5,TS_86_6,TS_87_1,TS_87_2,TS_87_3,TS_87_8,TS_87_9,TS_88_1,TS_88_7,TS_88_8,TS_88_9,TS_89_1,TS_89_3,TS_89_4,TS_89_6,TS_89_8,TS_8_7,TS_90_1,TS_90_5,TS_90_6,TS_90_7,TS_91_2,TS_91_3,TS_91_5,TS_91_8,TS_92_1,TS_92_2,TS_92_4,TS_92_8,TS_93_1,TS_93_2,TS_93_3,TS_93_4,TS_93_6,TS_93_7,TS_93_8,TS_94_1,TS_94_4,TS_94_8,TS_95_1,TS_95_3,TS_95_5,TS_95_6,TS_95_8,TS_95_9,TS_96_2,TS_96_3,TS_96_5,TS_96_7,TS_96_8,TS_97_2,TS_97_3,TS_97_4,TS_97_5,TS_97_6,TS_98_2,TS_98_3,TS_98_5,TS_98_6,TS_98_7,TS_98_9,TS_99_1,TS_99_2,TS_99_3,TS_99_4,TS_99_6,TS_99_7,TS_9_4,TS_9_5,TS_9_7,TS_9_8,TS_9_9"
+    private = private.split(",")
+
     start = time.time()
     main_regular(cfg, 
                  checkpoints = parser_args.checkpoints,
                  device_id = parser_args.device,
                  data_path = parser_args.data_folder,
-                 output_dir = parser_args.output_dir
+                 output_dir = parser_args.output_dir,
+                 mode = parser_args.mode,
+                 #tomogram_list = private
                  )
     print(f'The inference process takes {time.time()-start} s to finish.')
