@@ -79,7 +79,12 @@ TARGET_CLASSES = (
         "radius": 135,
         "map_threshold": 0.201,
     },
-    {"name": "beta-amylase", "label": 5, "color": [153, 63, 0, 128], "radius": 65, "map_threshold": 0.035},
+    {   "name": "beta-amylase",
+        "label": 5, 
+        "color": [153, 63, 0, 128], 
+        "radius": 65, 
+        "map_threshold": 0.035
+    },
 )
 
 CLASS_LABEL_TO_CLASS_NAME = {c["label"]: c["name"] for c in TARGET_CLASSES}
@@ -425,6 +430,7 @@ def postprocess_scores_offsets_into_submission(
         pre_nms_top_k=pre_nms_top_k,
     )
     topk_scores = topk_scores.float().cpu().numpy()
+    print(f'pixelsize {ANGSTROMS_IN_PIXEL}')
     top_coords = topk_coords_px.float().cpu().numpy() * ANGSTROMS_IN_PIXEL
     topk_clses = topk_clses.cpu().numpy()
     submission = dict(
@@ -662,6 +668,8 @@ def predict_volume_regular(
     """
     Slide window infrerence with TTA.
     """
+    print(f'volume shape {volume.shape}')
+    dim_z, dim_y, dim_x = volume.shape
     # Convert volume to (B, C, D, H, W)
     volume_tensor = (
         mean_std_renormalization(torch.from_numpy(volume).permute(2, 1, 0)[None, None])
@@ -669,14 +677,13 @@ def predict_volume_regular(
         .to(torch_device)
     )
 
-    img_flipped = torch.flip(volume_tensor, [2, 3, 4])
+    # img_flipped = torch.flip(volume_tensor, [2])
     ensemble_prediction = None
     particle_ids = [0, 2, 3, 4, 5, 1]
     count = 0
 
     for i, model in enumerate(models):
         model = model.eval().to(torch_device)
-        print(model)
         pred = sliding_window_inference4(
             inputs=volume_tensor,
             predictor=model,
@@ -689,7 +696,7 @@ def predict_volume_regular(
         )
         pred += torch.flip(
             sliding_window_inference4(
-                inputs=img_flipped,
+                inputs=torch.flip(volume_tensor, [2,3,4]),
                 predictor=model,
                 roi_size=(96, 96, 96),
                 sw_batch_size=batch_size,
@@ -697,7 +704,7 @@ def predict_volume_regular(
                 overlap=(0.21, 0.21, 0.21),
                 z_scale=[0.5, 0.5, 0.5],
                 verbose=False
-            ), [1, 2, 3]
+            ), [1,2,3]
         )
 
         if ensemble_prediction is None:
@@ -705,16 +712,17 @@ def predict_volume_regular(
         else:
             ensemble_prediction += pred
         count += 2
+        #count = 1
 
     ensemble_prediction /= count
     ensemble_prediction = F.interpolate(
         ensemble_prediction.softmax(0)[particle_ids][None],
-        (630, 630, 184),
+        (dim_x, dim_y, dim_z),
         mode="trilinear"
     )[0]
     ensemble_prediction = F.interpolate(
         ensemble_prediction[None],
-        (630 // 2, 630 // 2, 184 // 2),
+        (dim_x // 2, dim_y // 2, dim_z // 2),
         mode="trilinear"
     )[0]
     ensemble_prediction = ensemble_prediction.permute(0, 3, 2, 1)
@@ -777,11 +785,13 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--config", help="config filename")
     parser.add_argument("-d", "--device", type=int, help="config filename")
     parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for inference. Example:  data_folder/ExperimentRuns/TS_5_4/VoxelSpacing10.000/denoised.zarr")
+    parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixel size in Angstroms")
     parser.add_argument("-m", "--mode", type=str, default="denoised", help="reconstruction mode")
     parser.add_argument("-p", "--checkpoints", type=str, default="./checkpoints", help="checkpoints folder (multiple checkpoints will create a model soup)")
     parser.add_argument("-D", "--debug", action='store_true', help="debugging True/ False")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="outputs")
     parser_args, other_args = parser.parse_known_args(sys.argv)
+    ANGSTROMS_IN_PIXEL = parser_args.pixelsize 
 
     sys.path.append("src/czii_cryoet_models/configs")
     sys.path.append("src/czii_cryoet_models/data")
@@ -804,6 +814,7 @@ if __name__ == "__main__":
                  data_path = parser_args.data_folder,
                  output_dir = parser_args.output_dir,
                  mode = parser_args.mode,
+                 #tomogram_list = ["16885"]
                  #tomogram_list = private
                  )
     print(f'The inference process takes {time.time()-start} s to finish.')
