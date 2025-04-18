@@ -89,7 +89,7 @@ class CustomDataset(Dataset):
             print(zf.keys())
             img = np.array(zf[0]).transpose(2,1,0)
         
-        centers = self.exp_dict.get_group(experiment_id)[['x','y','z']].values / 10
+        centers = self.exp_dict.get_group(experiment_id)[['x','y','z']].values / self.cfg.pixelsize
         classes = self.exp_dict.get_group(experiment_id)['particle_type'].map(self.class2id).values
         mask = np.zeros((self.n_classes,) + img.shape[-3:])
         mask[classes, centers[:,0].astype(int), centers[:,1].astype(int), centers[:,2].astype(int)] = 1
