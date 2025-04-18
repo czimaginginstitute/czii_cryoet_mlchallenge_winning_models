@@ -107,6 +107,7 @@ cfg.pretrained = False
 
 #data
 cfg.dataset = "ds_1"
+cfg.pixelsize = 10.012
 cfg.classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle']
 cfg.n_classes = len(cfg.classes)
 

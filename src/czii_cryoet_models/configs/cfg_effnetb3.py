@@ -7,7 +7,7 @@ import monai.transforms as mt
 cfg = basic_cfg
 
 cfg.name = os.path.basename(__file__).split(".")[0]
-cfg.output_dir = f"/mount/cryo/models/{os.path.basename(__file__).split('.')[0]}"
+cfg.output_dir = "./output/"
 
 #model
 cfg.backbone = 'efficientnet-b3'
