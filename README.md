@@ -2,7 +2,11 @@
 The re-fractory codes of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main).
 
 # Installation
-cd into the root folder, `pip install -e .`
+cd into the root folder, then 
+```
+pip install -r requirements.txt
+pip install -e .
+```
 
 or run the enviroment in the container as suggested by the original repository. Below is an example of using apptainer on CZBiohub HPC.
 
