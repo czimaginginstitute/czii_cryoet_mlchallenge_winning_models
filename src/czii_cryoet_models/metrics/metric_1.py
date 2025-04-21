@@ -164,10 +164,12 @@ def calc_metric(cfg, pp_out, val_df, pre="val"):
 #         beta=4)[0]
 #     print('score003',score003)
 
+    # find the best probability cutoff threshold
     best_ths = []
-    for p in particles:
-        sol0a = solution[solution['particle_type']==p].copy()
-        sub0a = submission[submission['particle_type']==p].copy()
+    for p in particles: 
+        sol0a = solution[solution['particle_type']==p].copy()  # ground truth
+        sub0a = submission[submission['particle_type']==p].copy()  # prediction
+        print(sub0a)
         scores = []
         ths = np.arange(0,0.5,0.005)
         for c in ths:

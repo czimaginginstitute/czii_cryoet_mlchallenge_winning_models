@@ -32,7 +32,7 @@ def reconstruct(img, locations, out_size, crop_size):
     return reconstructed_img
 
 
-def post_process_pipeline(cfg, val_data, val_df):
+def post_process_pipeline(cfg, val_data, pixelsize=10, dims=(630, 630, 184)):
     
     img = val_data['logits']
     img = torch.nn.functional.interpolate(img, size=(cfg.roi_size[0],cfg.roi_size[1],cfg.roi_size[2]), mode='trilinear', align_corners=False)
@@ -47,9 +47,9 @@ def post_process_pipeline(cfg, val_data, val_df):
 
     for i,p in enumerate(cfg.classes):
         p1 = preds[i][None,].cuda()
-        y = simple_nms(p1, nms_radius=int(0.5 * cfg.particle_radi[p]/10))
+        y = simple_nms(p1, nms_radius=int(0.5 * cfg.particle_radi[p]/pixelsize))
         kps = torch.where(y>0)
-        xyz = torch.stack(kps[1:],-1) * 10 * 2
+        xyz = torch.stack(kps[1:],-1) * pixelsize * 2
         conf = y[kps]
         pred_df_ = pd.DataFrame(xyz.cpu().numpy(),columns=['x','y','z'])
         pred_df_['particle_type'] = p
@@ -57,6 +57,7 @@ def post_process_pipeline(cfg, val_data, val_df):
 #         pred_df_['experiment'] = experiments[fold]
         pred_df += [pred_df_]
     pred_df = pd.concat(pred_df)
-    pred_df = pred_df[(pred_df['x']<6300) & (pred_df['y']<6300)& (pred_df['z']<1840) & (pred_df['conf']>0.01)].copy()
+    dx, dy, dz = dims
+    pred_df = pred_df[(pred_df['x']<pixelsize*dx) & (pred_df['y']<pixelsize*dy)& (pred_df['z']<pixelsize*dz) & (pred_df['conf']>0.01)].copy()
     pred_df.to_csv(f"{cfg.output_dir}/fold{cfg.fold}/val_pred_df_seed{cfg.seed}.csv",index=False)
     return pred_df

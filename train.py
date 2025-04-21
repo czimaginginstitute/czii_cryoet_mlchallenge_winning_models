@@ -126,7 +126,7 @@ def run_eval(model, val_dataloader, cfg, pre="val", curr_epoch=0):
     if (cfg.local_rank == 0) and (cfg.calc_metric) and (((curr_epoch + 1) % cfg.calc_metric_epochs) == 0):
 
         val_df = val_dataloader.dataset.df
-        pp_out = cfg.post_process_pipeline(cfg, val_data, val_df)
+        pp_out = cfg.post_process_pipeline(cfg, val_data, pixelsize=10, dims=(630, 630, 184))
         val_score = cfg.calc_metric(cfg, pp_out, val_df, pre)
         if type(val_score)!=dict:
             val_score = {f'score':val_score}
@@ -421,8 +421,12 @@ def train(cfg):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("-c", "--config", help="config filename")
+    parser.add_argument("-c", "--config", help="Model config filename")
     parser.add_argument("-d", "--debug", action='store_true', help="debugging True/ False")
+    parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file path. Default is None.")
+    parser.add_argument("-n", "--epochs", type=int, default=100, help="Number of epochs. Default is 100.")
+    parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
+    parser.add_argument("--distributed", type=bool, default=False, help="Distributed training, default is False.")
     parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for training")
     parser.add_argument("-t", "--train_df", type=str, default="train_folded_v1.csv", help="dataframe file containing label localizations")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving checkpoints")
@@ -440,6 +444,11 @@ if __name__ == "__main__":
     cfg.output_dir = parser_args.output_dir
     cfg.data_folder = parser_args.data_folder
     cfg.train_df = parser_args.train_df
+    cfg.pretrained_weights = parser_args.pretrained_weights if parser_args.pretrained_weights else None
+    cfg.epochs = parser_args.epochs
+    cfg.pixelsize = parser_args.pixelsize
+    print(f"Distributed training {parser_args.distributed}")
+    cfg.distributed = parser_args.distributed
 
     if parser_args.debug:
         print('debug mode')
@@ -476,6 +485,6 @@ if __name__ == "__main__":
     
     start = time.time()
     result = train(cfg)
-    print(f'The training process takes {time.tiem()-start} s to finish.')
+    print(f'The training process takes {time.time()-start} s to finish.')
     print(result)
 
