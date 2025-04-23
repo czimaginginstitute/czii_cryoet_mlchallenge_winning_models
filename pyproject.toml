@@ -13,8 +13,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "kaggle",
-  "neptune",
-  "scikit-learn"
+  "scikit-learn",
   "zarr==2.18.2",
   "numcodecs==0.11.0",
   "pandas",
