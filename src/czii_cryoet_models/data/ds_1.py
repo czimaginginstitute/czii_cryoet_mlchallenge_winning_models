@@ -4,6 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset
 import zarr
 from tqdm import tqdm
+import monai
 
 def batch_to_device(batch, device):
     batch_dict = {key: batch[key].to(device) for key in batch}
@@ -18,8 +19,6 @@ def collate_fn(batch):
 tr_collate_fn = collate_fn
 val_collate_fn = collate_fn
 
-import monai.data as md
-import monai.transforms as mt
 
 
 class CustomDataset(Dataset):
@@ -36,17 +35,25 @@ class CustomDataset(Dataset):
 
             
         self.random_transforms = aug
+        self.static_transforms = monai.transforms.Compose([
+                                    monai.transforms.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+                                    monai.transforms.NormalizeIntensityd(keys="image")
+                                    ])
         data = [self.load_one(img_id) for img_id in tqdm(self.experiment_df['experiment'].values)]
-        data = md.CacheDataset(data=data, transform=cfg.static_transforms, cache_rate=1.0)
+        data = monai.data.CacheDataset(data=data, transform=self.static_transforms, cache_rate=1.0)
+
                 
         if self.mode == 'train':
-            self.monai_ds = md.Dataset(data=data, transform=self.random_transforms)
+            self.monai_ds = monai.data.Dataset(data=data, transform=self.random_transforms)  # A list of 4 torch dataset of [4 pathes]
+            print(f"monai_ds\n{len(self.monai_ds)}")
             self.sub_epochs = cfg.train_sub_epochs
             self.len = len(self.monai_ds) * self.sub_epochs
         else:
-            self.monai_ds = md.CacheDataset(data=data, transform=self.random_transforms, cache_rate=1.0)[0]
+            self.monai_ds = monai.data.CacheDataset(data=data, transform=self.random_transforms, cache_rate=1.0)[0]
             self.sub_epochs = cfg.val_sub_epochs
             self.len = len(self.monai_ds['image'])
+        
+        
             
     def __getitem__(self, idx):
 
@@ -72,27 +79,18 @@ class CustomDataset(Dataset):
         return self.len
 
     def load_one(self, experiment_id):
-        
-
         img_fp = f'{self.data_folder}{experiment_id}'
         try:
             with zarr.open(img_fp + '/VoxelSpacing10.000/denoised.zarr') as zf:
-                img = np.array(zf[0]).transpose(2,1,0)
+                img = np.array(zf[0]).transpose(2,1,0)  # why transpose? change handness?
             # img = np.array(zarr.open(img_fp + '/VoxelSpacing10.000/denoised.zarr')[0]).transpose(2,1,0)
         except Exception as e:
             print(e)
         
-        zf = zarr.open(img_fp + '/VoxelSpacing10.000/denoised.zarr', mode="a")
-        print(img_fp + '/VoxelSpacing10.000/denoised.zarr')
-        print("Zarr keys:", list(zf.keys()))
-        with zarr.open(img_fp + '/VoxelSpacing10.000/denoised.zarr') as zf:
-            print(zf.keys())
-            img = np.array(zf[0]).transpose(2,1,0)
-        
         centers = self.exp_dict.get_group(experiment_id)[['x','y','z']].values / self.cfg.pixelsize
         classes = self.exp_dict.get_group(experiment_id)['particle_type'].map(self.class2id).values
         mask = np.zeros((self.n_classes,) + img.shape[-3:])
-        mask[classes, centers[:,0].astype(int), centers[:,1].astype(int), centers[:,2].astype(int)] = 1
+        mask[classes, centers[:,0].astype(int), centers[:,1].astype(int), centers[:,2].astype(int)] = 1  # one-hot label sparse mask 
         return {'image':img, 'label':mask}
 
 
