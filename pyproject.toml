@@ -13,6 +13,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "kaggle",
+  "copick",
   "scikit-learn",
   "zarr==2.18.2",
   "numcodecs==0.11.0",
@@ -21,6 +22,7 @@ dependencies = [
   "albumentations==1.4.21",
   "opencv-python==4.8.1.78",
   "timm==1.0.11",
+  "pytorch-lightning",
   "monai==1.4.0",
   "mrcfile"
 ]
