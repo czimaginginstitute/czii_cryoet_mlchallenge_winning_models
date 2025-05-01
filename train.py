@@ -1,490 +1,191 @@
-import numpy as np
-import pandas as pd
-import importlib
+import glob
 import sys
-from tqdm import tqdm
-import gc
+import math
+import json
 import argparse
 import torch
-import math
-import time
-try:
-    from torch.amp import GradScaler, autocast
-except:
-    from torch.cuda.amp import GradScaler, autocast
-from torch.nn.parallel import DistributedDataParallel as NativeDDP
-from collections import defaultdict
-
-from czii_cryoet_models.utils.utils import (
-    sync_across_gpus,
-    set_seed,
-    get_model,
-    create_checkpoint,
-    load_checkpoint,
-    get_data,
-    get_dataset,
-    get_dataloader,
-    calc_grad_norm,
-    calc_weight_norm,
-    get_optimizer,
-    get_scheduler,
-    setup_neptune,
-)
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import pytorch_lightning as pl
+import torchmetrics
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import CSVLogger
+from torch.utils.data import DataLoader, random_split
+import numpy as np
+from torch.nn.utils.rnn import pad_sequence
+from typing import List
+import monai
+from torch.utils.data import DataLoader
+from czii_cryoet_models.model import LitNet
+from copick.impl.filesystem import CopickRootFSSpec
+from czii_cryoet_models.data.copick_dataset import CopickDataset, TrainDataset
+from czii_cryoet_models.data.augmentation import train_aug, get_basic_transform_list
 
 
-from copy import copy
-import os
-
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-try:
-    import cv2
-    cv2.setNumThreads(0)
-except:
-    print('no cv2 installed, running without')
+def worker_init_fn(worker_id):
+    np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 
-sys.path.append("configs")
-sys.path.append("models")
-sys.path.append("data")
-sys.path.append("postprocess")
-sys.path.append("metrics")
+def collate_fn(batch):
+    keys = batch[0].keys()
+    batch_dict = {key:torch.cat([b[key] for b in batch]) for key in keys}
+    return batch_dict
 
-
-def run_eval(model, val_dataloader, cfg, pre="val", curr_epoch=0):
-    saved_images = False
-    model.eval()
-    torch.set_grad_enabled(False)
-
-    # store information for evaluation
-    val_data = defaultdict(list)
-    val_score =0
-    for ind_, data in enumerate(tqdm(val_dataloader, disable=(cfg.local_rank != 0) | cfg.disable_tqdm)):
-
-        batch = cfg.batch_to_device(data, cfg.device)
-
-        if cfg.mixed_precision:
-            with autocast('cuda'):
-                output = model(batch)
+def inference_collate_fn(batch):
+    collated = {}
+    for key in batch[0]:
+        values = [b[key] for b in batch]
+        if isinstance(values[0], torch.Tensor):
+            collated[key] = torch.stack(values)
         else:
-            output = model(batch)
-
-        if (cfg.local_rank == 0) and (cfg.calc_metric) and (((curr_epoch + 1) % cfg.calc_metric_epochs) == 0):
-            # per batch calculations
-            pass
-        
-        if (not saved_images) & (cfg.save_first_batch_preds):
-            save_first_batch_preds(batch, output, cfg)
-            saved_images = True
-
-        for key, val in output.items():
-            val_data[key] += [output[key]]
-
-    for key, val in output.items():
-        value = val_data[key]
-        if isinstance(value[0], list):
-            val_data[key] = [item for sublist in value for item in sublist]
-        
-        else:
-            if len(value[0].shape) == 0:
-                val_data[key] = torch.stack(value)
-            else:
-                val_data[key] = torch.cat(value, dim=0)
-
-    if (cfg.local_rank == 0) and (cfg.calc_metric) and (((curr_epoch + 1) % cfg.calc_metric_epochs) == 0):
-        pass
-
-    if cfg.distributed and cfg.eval_ddp:
-        for key, val in output.items():
-            val_data[key] = sync_across_gpus(val_data[key], cfg.world_size)
-
-    if cfg.local_rank == 0:
-        if cfg.save_val_data:
-            if cfg.distributed:
-                for k, v in val_data.items():
-                    val_data[k] = v[: len(val_dataloader.dataset)]
-            torch.save(val_data, f"{cfg.output_dir}/fold{cfg.fold}/{pre}_data_seed{cfg.seed}.pth")
-
-    loss_names = [key for key in output if 'loss' in key]
-    loss_names += [key for key in output if 'score' in key]
-    for k in loss_names:
-        if cfg.local_rank == 0 and k in val_data:
-            losses = val_data[k].cpu().numpy()
-            loss = np.mean(losses)
-
-            print(f"Mean {pre}_{k}", loss)
-            if cfg.neptune_run:
-                if not math.isinf(loss) and not math.isnan(loss):
-                    cfg.neptune_run[f"{pre}/{k}"].log(loss, step=cfg.curr_step)
-
-
-    if (cfg.local_rank == 0) and (cfg.calc_metric) and (((curr_epoch + 1) % cfg.calc_metric_epochs) == 0):
-
-        val_df = val_dataloader.dataset.df
-        pp_out = cfg.post_process_pipeline(cfg, val_data, pixelsize=10, dims=(630, 630, 184))
-        val_score = cfg.calc_metric(cfg, pp_out, val_df, pre)
-        if type(val_score)!=dict:
-            val_score = {f'score':val_score}
-            
-        for k, v in val_score.items():
-            print(f"{pre}_{k}: {v:.3f}")
-            if cfg.neptune_run:
-                if not math.isinf(v) and not math.isnan(v):
-                    cfg.neptune_run[f"{pre}/{k}"].log(v, step=cfg.curr_step)
-        
-    if cfg.distributed:
-        torch.distributed.barrier()
-
-#     print("EVAL FINISHED")
-
-    return val_score
-
-
-def train(cfg):
-        # set seed
-    if cfg.seed < 0:
-        cfg.seed = np.random.randint(1_000_000)
-    print("seed", cfg.seed)
-
-
-    if cfg.distributed:
-
-        cfg.local_rank = int(os.environ["LOCAL_RANK"])
-        device = "cuda:%d" % cfg.local_rank
-        cfg.device = device
-
-        
-
-        torch.cuda.set_device(cfg.local_rank)
-        torch.distributed.init_process_group(backend="nccl", init_method="env://")
-        cfg.world_size = torch.distributed.get_world_size()
-        cfg.rank = torch.distributed.get_rank()
-#         print("Training in distributed mode with multiple processes, 1 GPU per process.")
-        print(f"Process {cfg.rank}, total {cfg.world_size}, local rank {cfg.local_rank}.")
-        cfg.group = torch.distributed.new_group(np.arange(cfg.world_size))
-#         print("Group", cfg.group)
-
-        # syncing the random seed
-        cfg.seed = int(
-            sync_across_gpus(torch.Tensor([cfg.seed]).to(device), cfg.world_size)
-            .detach()
-            .cpu()
-            .numpy()[0]
-        )  #
-        
-        print(f"LOCAL_RANK {cfg.local_rank}, device {device}, seed {cfg.seed}")
-
-    else:
-        cfg.local_rank = 0
-        cfg.world_size = 1
-        cfg.rank = 0  # global rank
-
-        device = "cuda:%d" % cfg.gpu
-        cfg.device = device
-
-    set_seed(cfg.seed)
-
-    if cfg.local_rank == 0:
-        cfg.neptune_run = setup_neptune(cfg)
-
-    train_df, val_df, test_df = get_data(cfg)
-    
-    train_dataset = get_dataset(train_df, cfg, mode='train')
-    train_dataloader = get_dataloader(train_dataset, cfg, mode='train')
-    
-    val_dataset = get_dataset(val_df, cfg, mode='val')
-    val_dataloader = get_dataloader(val_dataset, cfg, mode='val')
-    
-    if cfg.test:
-        test_dataset = get_dataset(test_df, cfg, mode='test')
-        test_dataloader = get_dataloader(test_dataset, cfg, mode='test')
-
-    if cfg.train_val:
-        train_val_dataset = get_dataset(train_df, cfg, mode='val')
-        train_val_dataloader = get_dataloader(train_val_dataset, cfg, 'val')
-
-    model = get_model(cfg, train_dataset)
-    if cfg.compile_model:
-        print('compiling model')
-        model = torch.compile(model)
-    model.to(device)
-
-    if cfg.distributed:
-
-        if cfg.syncbn:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-
-        model = NativeDDP(
-            model, device_ids=[cfg.local_rank], find_unused_parameters=cfg.find_unused_parameters
-        )
-
-    total_steps = len(train_dataset)
-    if train_dataloader.sampler is not None:
-        if 'WeightedRandomSampler' in str(train_dataloader.sampler.__class__):
-            total_steps = train_dataloader.sampler.num_samples
-
-    optimizer = get_optimizer(model, cfg)
-    scheduler = get_scheduler(cfg, optimizer, total_steps)
-
-    if cfg.mixed_precision:
-        scaler = GradScaler()
-    else:
-        scaler = None
-
-    cfg.curr_step = 0
-    i = 0
-    best_val_loss = np.inf
-    optimizer.zero_grad()
-    total_grad_norm = None    
-    total_weight_norm = None  
-    total_grad_norm_after_clip = None
-
-    for epoch in range(cfg.epochs):
-
-        set_seed(cfg.seed + epoch + cfg.local_rank)
-
-        cfg.curr_epoch = epoch
-        if cfg.local_rank == 0: 
-            print("EPOCH:", epoch)
-
-        
-        if cfg.distributed:
-            train_dataloader.sampler.set_epoch(epoch)
-
-        progress_bar = tqdm(range(len(train_dataloader)),disable=cfg.disable_tqdm)
-        tr_it = iter(train_dataloader)
-
-        losses = []
-
-        gc.collect()
-
-        if cfg.train:
-            # ==== TRAIN LOOP
-            for itr in progress_bar:
-                i += 1
-
-                cfg.curr_step += cfg.batch_size * cfg.world_size
-
-                try:
-                    data = next(tr_it)
-                except Exception as e:
-                    print(e)
-                    print("DATA FETCH ERROR")
-                    # continue
-
-
-                model.train()
-                torch.set_grad_enabled(True)
-
-
-                batch = cfg.batch_to_device(data, device)
-
-                if cfg.mixed_precision:
-                    with autocast('cuda'):
-                        output_dict = model(batch)
-                else:
-                    if cfg.bf16:
-                        with autocast('cuda',dtype=torch.bfloat16):
-                            output_dict = model(batch)
-                    else:
-                        output_dict = model(batch)
-
-                loss = output_dict["loss"]
-
-                losses.append(loss.item())
-
-                if cfg.grad_accumulation >1:
-                    loss /= cfg.grad_accumulation
-
-                # Backward pass
-
-                if cfg.mixed_precision:
-                    scaler.scale(loss).backward()
-
-                    if i % cfg.grad_accumulation == 0:
-                        if (cfg.track_grad_norm) or (cfg.clip_grad > 0):
-                            scaler.unscale_(optimizer)
-                        if cfg.track_grad_norm:
-                            total_grad_norm = calc_grad_norm(model.parameters(), cfg.grad_norm_type)                              
-                        if cfg.clip_grad > 0:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
-                        if cfg.track_grad_norm:
-                            total_grad_norm_after_clip = calc_grad_norm(model.parameters(), cfg.grad_norm_type)
-                        scaler.step(optimizer)
-                        scaler.update()
-                        optimizer.zero_grad()
-                        
-                else:
-
-                    loss.backward()
-                    if i % cfg.grad_accumulation == 0:
-                        if cfg.track_grad_norm:
-                            total_grad_norm = calc_grad_norm(model.parameters())
-                        if cfg.clip_grad > 0:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
-                        if cfg.track_grad_norm:
-                            total_grad_norm_after_clip = calc_grad_norm(model.parameters(), cfg.grad_norm_type)
-                        if cfg.track_weight_norm:
-                            total_weight_norm = calc_weight_norm(model.parameters(), cfg.grad_norm_type)
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        # print(optimizer.state_dict())
-                        # break
-
-                if cfg.distributed:
-                    torch.cuda.synchronize()
-
-                if scheduler is not None:
-                    scheduler.step()
-
-                if cfg.local_rank == 0 and cfg.curr_step % cfg.batch_size == 0:
-
-                    loss_names = [key for key in output_dict if 'loss' in key]
-                    if cfg.neptune_run:
-                        for l in loss_names:
-                            v = output_dict[l].item()
-                            if not math.isinf(v) and not math.isnan(v):
-                                cfg.neptune_run[f"train/{l}"].log(value=v, step=cfg.curr_step)
-                        cfg.neptune_run["lr"].log(value=optimizer.param_groups[0]["lr"], step=cfg.curr_step)
-                        if total_grad_norm is not None:
-                            cfg.neptune_run["total_grad_norm"].log(value=total_grad_norm.item(), step=cfg.curr_step)
-                            cfg.neptune_run["total_grad_norm_after_clip"].log(value=total_grad_norm_after_clip.item(), step=cfg.curr_step)
-                        if total_weight_norm is not None:
-                            cfg.neptune_run["total_weight_norm"].log(value=total_weight_norm.item(), step=cfg.curr_step)
-                    progress_bar.set_description(f"loss: {np.mean(losses[-10:]):.4f}")
-
-                if cfg.eval_steps != 0:
-                    if i % cfg.eval_steps == 0:
-                        if cfg.distributed and cfg.eval_ddp:
-                            val_loss = run_eval(model, val_dataloader, cfg, pre="val", curr_epoch=epoch)
-                        else:
-                            if cfg.local_rank == 0:
-                                val_loss = run_eval(model, val_dataloader, cfg, pre="val", curr_epoch=epoch)
-                    else:
-                        val_score = 0
-
-            print(f"Mean train_loss {np.mean(losses):.4f}")
-
-        if cfg.distributed:
-            torch.cuda.synchronize()
-        if cfg.force_fp16:
-            model = model.half().float()
-        if cfg.val:
-
-            if (epoch + 1) % cfg.eval_epochs == 0 or (epoch + 1) == cfg.epochs:
-                if cfg.distributed and cfg.eval_ddp:
-                    val_score = run_eval(model, val_dataloader, cfg, pre="val", curr_epoch=epoch)
-                else:
-                    if cfg.local_rank == 0:
-                        val_score = run_eval(model, val_dataloader, cfg, pre="val", curr_epoch=epoch)
-            else:
-                val_score = 0
-            
-        if cfg.train_val == True:
-            if (epoch + 1) % cfg.eval_train_epochs == 0 or (epoch + 1) == cfg.epochs:
-                if cfg.distributed and cfg.eval_ddp:
-                    _ = get_preds(model, train_val_dataloader, cfg, pre=cfg.pre_train_val)
-
-                else:
-                    if cfg.local_rank == 0:
-                        _ = get_preds(model, train_val_dataloader, cfg, pre=cfg.pre_train_val)
-
-
-        if cfg.distributed:
-            torch.distributed.barrier()
-
-        if (cfg.local_rank == 0) and (cfg.epochs > 0) and (cfg.save_checkpoint):
-            if not cfg.save_only_last_ckpt:
-                checkpoint = create_checkpoint(cfg, model, optimizer, epoch, scheduler=scheduler, scaler=scaler)
-
-                torch.save(
-                    checkpoint, f"{cfg.output_dir}/fold{cfg.fold}/checkpoint_last_seed{cfg.seed}.pth"
-                )
-
-    if (cfg.local_rank == 0) and (cfg.epochs > 0) and (cfg.save_checkpoint):
-        checkpoint = create_checkpoint(cfg, model, optimizer, epoch, scheduler=scheduler, scaler=scaler)
-
-        torch.save(
-            checkpoint, f"{cfg.output_dir}/fold{cfg.fold}/checkpoint_last_seed{cfg.seed}.pth"
-        )
-
-    if cfg.test:
-        run_eval(model, test_dataloader, test_df, cfg, pre="test")
-
-    return val_score
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument("-c", "--config", help="Model config filename")
+            collated[key] = values  # leave as list
+    return collated
+
+
+def get_args():
+    parser = argparse.ArgumentParser(
+        description = "3D image segmentation",
+    )
+    parser.add_argument("-c", "--copick_config", help="copick config file path")
+    parser.add_argument("-bs", "--batch_size", type=int, default=8, help="batch size for data loader")
+    parser.add_argument("-l", "--learning_rate", type=float, default=1e-4, help="Learning rate for optimizer")
     parser.add_argument("-d", "--debug", action='store_true', help="debugging True/ False")
     parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file path. Default is None.")
-    parser.add_argument("-n", "--epochs", type=int, default=100, help="Number of epochs. Default is 100.")
+    parser.add_argument("-e", "--epochs", type=int, default=100, help="Number of epochs. Default is 100.")
     parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
     parser.add_argument("--distributed", type=bool, default=False, help="Distributed training, default is False.")
     parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for training")
     parser.add_argument("-t", "--train_df", type=str, default="train_folded_v1.csv", help="dataframe file containing label localizations")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving checkpoints")
-    parser_args, other_args = parser.parse_known_args(sys.argv)
-    
-    sys.path.append("src/czii_cryoet_models/configs")
-    sys.path.append("src/czii_cryoet_models/data")
-    sys.path.append("src/czii_cryoet_models/metrics")
-    sys.path.append("src/czii_cryoet_models/models")
-    sys.path.append("src/czii_cryoet_models/postprocess")
-    sys.path.append("src/czii_cryoet_models/utils")
-    cfg = copy(importlib.import_module(parser_args.config).cfg)
-    
-    # change known options  
-    cfg.output_dir = parser_args.output_dir
-    cfg.data_folder = parser_args.data_folder
-    cfg.train_df = parser_args.train_df
-    cfg.pretrained_weights = parser_args.pretrained_weights if parser_args.pretrained_weights else None
-    cfg.epochs = parser_args.epochs
-    cfg.pixelsize = parser_args.pixelsize
-    print(f"Distributed training {parser_args.distributed}")
-    cfg.distributed = parser_args.distributed
+    return parser.parse_args()
 
-    if parser_args.debug:
-        print('debug mode')
-        cfg.neptune_connection_mode = 'debug'
+
+class DataModule(pl.LightningDataModule):
+    def __init__(
+            self, 
+            copick_root = None,
+            batch_size: int = 1,
+        ):
+        super().__init__()
+        self.batch_size = batch_size
+        self.copick_root = copick_root
+
+    def setup(self, stage=None):    # stage='train' only gets called for training
+        self.train_dataset = TrainDataset(
+            copick_root = self.copick_root,
+            transforms = train_aug,
+            run_names = ['TS_5_4', 'TS_6_4', 'TS_6_6', 'TS_69_2', 'TS_73_6', 'TS_86_3', 'TS_99_9'],
+            classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle'],      
+            pixelsize = 10.012,
+            n_aug=40
+        )
+
+        self.val_dataset = CopickDataset(
+            copick_root = self.copick_root,
+            run_names = ['TS_5_4', 'TS_6_4'],
+            classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle'],  
+            transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
+            pixelsize = 10.012
+        )
+        # train_size = int(0.7 * len(dataset))
+        # val_size = len(dataset) - train_size
+        # print(f'full_dataset {len(dataset)}, train set {train_size}, val set {val_size}')
+
+        # # Set random seed for deterministic dataset split
+        # torch.manual_seed(42)
+        # self.train_dataset, self.val_dataset = random_split(
+        #     dataset, [train_size, val_size]
+        # )
         
         
-    # overwrite params in config with additional args
-    if len(other_args) > 1:
-        other_args = {k.replace('-',''):v for k, v in zip(other_args[1::2], other_args[2::2])}
+        
+        
+        # print(f'train_dataset1\n{len(self.train_dataset)}')
+        # self.train_ds = TrainDataset(self.train_dataset)
+        # print(f'train_dataset2\n{len(self.train_ds)}')
 
-        for key in other_args:
-            if key in cfg.__dict__:
+    def train_dataloader(self):
+        print(f'self.train_dataset {len(self.train_dataset)}')
+        train_dataloader = DataLoader(
+            self.train_dataset,   # 1112*4
+            #sampler=sampler,
+            #shuffle=(sampler is None),
+            batch_size=8, #self.batch_size,  # 8
+            num_workers=8,  # one worker per batch
+            pin_memory=False,
+            collate_fn=collate_fn,
+            drop_last= True,
+            worker_init_fn=worker_init_fn,
+            prefetch_factor=2,
+            persistent_workers=True,
+        )
+        return train_dataloader
 
-                print(f'overwriting cfg.{key}: {cfg.__dict__[key]} -> {other_args[key]}')
-                cfg_type = type(cfg.__dict__[key])
-                if other_args[key] == 'None':
-                    cfg.__dict__[key] = None
-                elif cfg_type == bool:
-                    cfg.__dict__[key] = other_args[key] == 'True'
-                elif cfg_type == type(None):
-                    cfg.__dict__[key] = other_args[key]
-                else:
-                    cfg.__dict__[key] = cfg_type(other_args[key])
+    def val_dataloader(self):
+        print(f'self.val_dataset {len(self.val_dataset)}')
+        val_dataloader = DataLoader(
+            self.val_dataset,   # 1112*4
+            #sampler=sampler,
+            #shuffle=(sampler is None),
+            batch_size=2, #self.batch_size,  # 8
+            num_workers=2,  # one worker per batch
+            pin_memory=False,
+            collate_fn=inference_collate_fn,
+            drop_last= True,
+            worker_init_fn=worker_init_fn,
+            prefetch_factor=2,
+            persistent_workers=True,
+        )
+        return val_dataloader
 
-    os.makedirs(str(cfg.output_dir + f"/fold{cfg.fold}/"), exist_ok=True)
 
-    cfg.CustomDataset = importlib.import_module(cfg.dataset).CustomDataset
-    cfg.tr_collate_fn = importlib.import_module(cfg.dataset).tr_collate_fn
-    cfg.val_collate_fn = importlib.import_module(cfg.dataset).val_collate_fn
-    cfg.batch_to_device = importlib.import_module(cfg.dataset).batch_to_device
 
-    cfg.post_process_pipeline = importlib.import_module(cfg.post_process_pipeline).post_process_pipeline
-    cfg.calc_metric = importlib.import_module(cfg.metric).calc_metric
-    
-    start = time.time()
-    result = train(cfg)
-    print(f'The training process takes {time.time()-start} s to finish.')
-    print(result)
+if __name__ == "__main__":
+    args = get_args()
+    copick_root = CopickRootFSSpec.from_file(args.copick_config)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    data_module = DataModule(copick_root=copick_root, batch_size=args.batch_size)
+
+    backbone_args = dict(
+        spatial_dims=3,    
+        in_channels=1,
+        out_channels=6,
+        backbone='resnet34',
+        pretrained=False
+    )
+
+    model = LitNet(        
+        classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle'],
+        class_weights = np.array([256,256,256,256,256,256,1]),
+        backbone_args = backbone_args,
+        lvl_weights = np.array([0, 0, 0, 1]),
+    )
+
+    # Define Checkpoint Callback
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_score",
+        mode="min",
+        save_top_k=1,
+        dirpath=f"{args.output_dir}/checkpoints/",
+        filename="best_model"
+    )
+
+    # Logger
+    logger = CSVLogger(save_dir=f"{args.output_dir}/logs/", name="training_logs")
+
+    # Trainer
+    trainer = pl.Trainer(
+        max_epochs=args.epochs,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        log_every_n_steps=2,
+        callbacks=[checkpoint_callback],
+        logger=logger
+    )
+
+    # Train Model
+    trainer.fit(model, data_module)
+
+
 

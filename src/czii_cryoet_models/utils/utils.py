@@ -17,44 +17,6 @@ from czii_cryoet_models.configs.common_config import cfg
 import logging
 import pickle
 
-# transforms
-train_aug = monai.transforms.Compose([
-    monai.transforms.RandSpatialCropSamplesd(
-        keys=["image", "label"],
-        roi_size=cfg.roi_size,
-        num_samples=4
-    ),
-    monai.transforms.RandFlipd(
-        keys=["image", "label"],
-        prob=0.5,
-        spatial_axis=0,
-    ),
-    monai.transforms.RandFlipd(
-        keys=["image", "label"],
-        prob=0.5,
-        spatial_axis=1,
-    ),
-    monai.transforms.RandFlipd(
-        keys=["image", "label"],
-        prob=0.5,
-        spatial_axis=2,
-    ),
-    monai.transforms.RandRotate90d(
-        keys=["image", "label"],
-        prob=0.75,
-        max_k=3,
-        spatial_axes=(0, 1),
-    ),
-    monai.transforms.RandRotated(
-        keys=["image", "label"], 
-        prob=0.5,range_x=0.78,
-        range_y=0.,range_z=0., 
-        padding_mode='reflection'
-    )
-    ])
-
-val_aug = monai.transforms.Compose([monai.transforms.GridPatchd(keys=["image","label"],patch_size=cfg.roi_size, pad_mode='reflect')])
-
 
 # functions
 def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
