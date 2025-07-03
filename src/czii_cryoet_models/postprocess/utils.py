@@ -7,68 +7,12 @@ from monai.inferers.utils import _get_scan_interval
 from collections import defaultdict
 import torch.nn.functional as F
 import copy
-from czii_cryoet_models.postprocess.metric import score, process_run
+import pandas as pd
+from czii_cryoet_models.postprocess.metric_old import score, process_run
+from czii_cryoet_models.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS, WEIGHTS
 
 from typing import List, Tuple, Union, Any, Iterable, Optional
 
-
-ANGSTROMS_IN_PIXEL = 10.012
-
-TARGET_CLASSES = (
-    {
-        "name": "apo-ferritin",
-        "label": 0,
-        "color": [0, 117, 255],
-        "radius": 60,
-        "map_threshold": 0.0418,
-    },
-    {
-        "name": "beta-galactosidase",
-        "label": 1,
-        "color": [176, 0, 192],
-        "radius": 90,
-        "map_threshold": 0.0578,
-    },
-    {
-        "name": "ribosome",
-        "label": 2,
-        "color": [0, 92, 49],
-        "radius": 150,
-        "map_threshold": 0.0374,
-    },
-    {
-        "name": "thyroglobulin",
-        "label": 3,
-        "color": [43, 255, 72],
-        "radius": 130,
-        "map_threshold": 0.0278,
-    },
-    {
-        "name": "virus-like-particle",
-        "label": 4,
-        "color": [255, 30, 53],
-        "radius": 135,
-        "map_threshold": 0.201,
-    },
-    {   "name": "beta-amylase",
-        "label": 5, 
-        "color": [153, 63, 0, 128], 
-        "radius": 65, 
-        "map_threshold": 0.035
-    },
-)
-
-CLASS_LABEL_TO_CLASS_NAME = {c["label"]: c["name"] for c in TARGET_CLASSES}
-TARGET_SIGMAS = [c["radius"] / ANGSTROMS_IN_PIXEL for c in TARGET_CLASSES]
-
-weights = {
-    'apo-ferritin': 1,
-    'beta-amylase': 0,
-    'beta-galactosidase': 2,
-    'ribosome': 1,
-    'thyroglobulin': 2,
-    'virus-like-particle': 1,
-}
 
 def as_tuple_of_3(value) -> Tuple:
     if isinstance(value, int):
@@ -78,7 +22,6 @@ def as_tuple_of_3(value) -> Tuple:
         result = a, b, c
 
     return result
-
 
 
 
@@ -179,7 +122,8 @@ def sliding_window(
         inputs, 
         predictor, 
         roi_size=(96, 96, 96), 
-        sw_batch_size=1, n_classes=7, 
+        sw_batch_size=1, 
+        n_classes=7, 
         overlap=(0.21, 0.21, 0.21), 
         z_scale=[0.5, 0.5, 0.5], 
         verbose=False,
@@ -301,7 +245,8 @@ def postprocess_scores_offsets_into_submission(
     use_centernet_nms,
     use_single_label_per_anchor,
     pre_nms_top_k,
-    submission_pick_points
+    submission_pick_points,
+    mode = "validation",
 ):
     topk_coords_px, topk_clses, topk_scores = decode_detections_with_nms(
         scores=scores,
@@ -317,13 +262,7 @@ def postprocess_scores_offsets_into_submission(
     topk_scores = topk_scores.float().cpu().numpy()
     top_coords = topk_coords_px.float().cpu().numpy() * ANGSTROMS_IN_PIXEL
     topk_clses = topk_clses.cpu().numpy()
-    
-        # if object_name in CLASS_LABEL_TO_CLASS_NAME.values
-    # points = defaultdict(list)
-    #                 pick_points[object_name] = {
-    #                 'points': np.array([[p.location.x, p.location.y, p.location.z] for p in points]) / self.pixelsize,
-    #                 'radius': radius
-    #             }
+    print(f'top_coords:\n{top_coords}topk_clses:\n{topk_clses}topk_scores:\n{topk_scores}')
 
     submission = dict(
         experiment=[],
@@ -334,37 +273,39 @@ def postprocess_scores_offsets_into_submission(
         z=[],
     )
     for cls, coord, score in zip(topk_clses, top_coords, topk_scores):
-        #points[CLASS_LABEL_TO_CLASS_NAME[int(cls)]].append([float(coord[0], float(coord[1], float(coord[2]))])
+        #points[CLASS_INDEX_TO_CLASS_NAME[int(cls)]].append([float(coord[0], float(coord[1], float(coord[2]))])
         submission["experiment"].append(run_name)
-        submission["particle_type"].append(CLASS_LABEL_TO_CLASS_NAME[int(cls)])
+        submission["particle_type"].append(CLASS_INDEX_TO_CLASS_NAME[int(cls)])
         submission["score"].append(float(score))
         submission["x"].append(float(coord[0]))
         submission["y"].append(float(coord[1]))
         submission["z"].append(float(coord[2]))
-        submission_pick_points[CLASS_LABEL_TO_CLASS_NAME[int(cls)]]['points'].append([float(coord[0]), float(coord[1]), float(coord[2])])
-
+        submission_pick_points[CLASS_INDEX_TO_CLASS_NAME[int(cls)]]['points'].append([float(coord[0]), float(coord[1]), float(coord[2])])
+    
     for object_name, item in submission_pick_points.items():
         submission_pick_points[object_name]['points'] = np.array(item['points'])
 
+    if mode == "inference":
+        df = pd.DataFrame.from_dict(submission)
+        df.to_csv("submission.csv", index=False)
 
     return submission, submission_pick_points
 
 
-def postprocess_pipeline(pred, metas, D, H, W):
+def postprocess_pipeline(pred, metas, D, H, W, mode="validation"):
     # No TTA during validation step (to keep it fast)
-    # Apply softmax and interpolate back to original size
-    particle_ids = [0, 2, 3, 4, 5, 1]  # TODO: make sure this is correct
-    pred = pred.softmax(0)[particle_ids][None]
-    pred = F.interpolate(pred, (D, H, W), mode="trilinear")[0]
-
+    # Apply softmax and interpolate back to original size (7, 315, 315, 92) -> (1, 7, 630, 630, 184)
+    pred = pred.softmax(0)[:-1][None]  # (1, 7, 315, 315, 92) 'trilinear' interpolation in x,y,z directions is only available for 5D tensors
+    pred = F.interpolate(pred, (D, H, W), mode="trilinear")[0] # (7, 630, 630, 184)
     # Downsample again if needed (based on your inference code)
-    pred = F.interpolate(pred[None], (D // 2, H // 2, W // 2), mode="trilinear")[0]
+    pred = F.interpolate(pred[None], (D // 2, H // 2, W // 2), mode="trilinear")[0] # (7, 315, 315, 92)
     pred = pred.permute(0, 3, 2, 1)  # (C, W, H, D)
 
     # Create fake offsets (zeros) for CenterNet decoding
     fake_offsets = torch.zeros_like(pred[0:3])
 
     all_results = {}
+    print(f'metas: {len(metas)}')
     for meta in metas:
         run = meta['run']
         run_name = run.name
@@ -397,9 +338,11 @@ def postprocess_pipeline(pred, metas, D, H, W):
             use_centernet_nms=True,
             use_single_label_per_anchor=False,
             pre_nms_top_k=16536,
-            submission_pick_points=submission_pick_points
+            submission_pick_points=submission_pick_points,
+            mode = mode
         )
+
         all_results[run_name] = process_run(gt_pick_points, submission_pick_points, pickable_objects)
-        print(all_results)
+    print(all_results)
     
-    return score(all_results, weights)
+    return score(all_results, WEIGHTS)

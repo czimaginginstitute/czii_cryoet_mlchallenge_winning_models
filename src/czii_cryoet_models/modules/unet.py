@@ -5,17 +5,20 @@ from monai.networks.nets.flexible_unet import SegmentationHead, UNetDecoder, FLE
 
 class PatchedUNetDecoder(UNetDecoder):
     
-    """add functionality to output all feature maps"""
+    """UNet decoder to output results of each feature"""
     
-    def forward(self, features: list[torch.Tensor], skip_connect: int = 4):
-        skips = features[:-1][::-1]
-        features = features[1:][::-1]
+    def forward(
+            self, features: list[torch.Tensor], 
+            skip_connect: int = 4
+        ):
+        skips = features[:-1][::-1] # skip the last channel, [E3, E2, E1, E0]
+        features = features[1:][::-1] # skip the first channel, [E4, E3, E2, E1]
 
         out = []
         x = features[0]
         out += [x]
         for i, block in enumerate(self.blocks):
-            if i < skip_connect:
+            if i < skip_connect: # residual for the top 4 layers
                 skip = skips[i]
             else:
                 skip = None
@@ -58,7 +61,7 @@ class FlexibleUNet(nn.Module):
 
         Args:
             in_channels: number of input channels.
-            out_channels: number of output channels.
+            out_channels: number of output channels. out_channels = nclasses + 1. background is added as one of the classes. 
             backbone: name of backbones to initialize, only support efficientnet and resnet right now,
                 can be from [efficientnet-b0, ..., efficientnet-b8, efficientnet-l2, resnet10, ..., resnet200].
             pretrained: whether to initialize pretrained weights. ImageNet weights are available for efficient networks
@@ -113,9 +116,6 @@ class FlexibleUNet(nn.Module):
         encoder_channels = tuple([in_channels] + list(encoder["feature_channel"]))
         encoder_type = encoder["type"]
         self.encoder = encoder_type(**encoder_parameters)
-        print(decoder_channels)
-        
-        
         
         self.decoder = PatchedUNetDecoder(
             spatial_dims=spatial_dims,
@@ -143,7 +143,7 @@ class FlexibleUNet(nn.Module):
 
         x = inputs
         enc_out = self.encoder(x)
-        decoder_out = self.decoder(enc_out, self.skip_connect)[1:-1]
+        decoder_out = self.decoder(enc_out, self.skip_connect)[1:-1]  # skip the first and the last feature 
         x_seg = [self.segmentation_heads[i](decoder_out[i]) for i in range(len(decoder_out))]
 
         return x_seg

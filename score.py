@@ -1,7 +1,5 @@
-import glob  
 import numpy as np
 import time
-from sklearn.metrics import roc_auc_score
 import argparse
 import pandas as pd
 from scipy.spatial import KDTree

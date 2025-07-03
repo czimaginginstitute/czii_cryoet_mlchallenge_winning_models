@@ -9,11 +9,7 @@ from torch import nn, optim
 # from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import lr_scheduler
-import importlib
 import math
-import monai
-from czii_cryoet_models.configs.common_config import cfg
-
 import logging
 import pickle
 
@@ -180,37 +176,8 @@ def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 
-def get_model(cfg, ds):
-    Net = importlib.import_module(cfg.model).Net
-    net = Net(cfg)
-    if cfg.pretrained_weights is not None:
-        if type(cfg.pretrained_weights) == list:
-            cfg.pretrained_weights = cfg.pretrained_weights[cfg.fold]
-        print(f'{cfg.local_rank}: loading weights from',cfg.pretrained_weights)
-        state_dict = torch.load(cfg.pretrained_weights, map_location='cpu')
-        if "model" in state_dict.keys():
-            state_dict = state_dict['model']
-        state_dict = {key.replace('module.',''):val for key,val in state_dict.items()}
-        if cfg.pop_weights is not None:
-            print(f'popping {cfg.pop_weights}')
-            to_pop = []
-            for key in state_dict:
-                for item in cfg.pop_weights:
-                    if item in key:
-                        to_pop += [key]
-            for key in to_pop:
-                print(f'popping {key}')
-                state_dict.pop(key)
-
-        net.load_state_dict(state_dict, strict=cfg.pretrained_weights_strict)
-        print(f'{cfg.local_rank}: weights loaded from',cfg.pretrained_weights)
-    
-    return net
-
 
 def create_checkpoint(cfg, model, optimizer, epoch, scheduler=None, scaler=None):
-
-    
     state_dict = model.state_dict()
     if cfg.save_weights_only:
         checkpoint = {"model": state_dict}
@@ -229,6 +196,7 @@ def create_checkpoint(cfg, model, optimizer, epoch, scheduler=None, scaler=None)
         checkpoint["scaler"] = scaler.state_dict()
     return checkpoint
 
+
 def load_checkpoint(cfg, model, optimizer, scheduler=None, scaler=None):
     
     print(f'loading ckpt {cfg.resume_from}')
@@ -243,221 +211,86 @@ def load_checkpoint(cfg, model, optimizer, scheduler=None, scaler=None):
     return model, optimizer, scheduler_dict, scaler, epoch
 
 
-def get_dataset(df, cfg, mode='train'):
-    
-    #modes train, val, index
-    print(f"Loading {mode} dataset")
 
-    if mode == 'train':
-        dataset = get_train_dataset(df, cfg)
-#     elif mode == 'train_val':
-#         dataset = get_val_dataset(df, cfg)
-    elif mode == 'val':
-        dataset = get_val_dataset(df, cfg)
-    elif mode == 'test':
-        dataset = get_test_dataset(df, cfg)
-    else:
-        pass
-    return dataset
-
-def get_dataloader(ds, cfg, mode='train'):
-    
-    if mode == 'train':
-        dl = get_train_dataloader(ds, cfg)
-    elif mode =='val':
-        dl = get_val_dataloader(ds, cfg)
-    elif mode =='test':
-        dl = get_test_dataloader(ds, cfg)
-    return dl
-
-
-def get_train_dataset(train_df, cfg):
-
-    train_dataset = cfg.CustomDataset(train_df, cfg, aug=train_aug, mode="train")
-    if cfg.data_sample > 0:
-        train_dataset = torch.utils.data.Subset(train_dataset, np.arange(cfg.data_sample))
-    return train_dataset
-
-
-def get_train_dataloader(train_ds, cfg):
-
-    if cfg.distributed:
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            train_ds, num_replicas=cfg.world_size, rank=cfg.local_rank, shuffle=True, seed=cfg.seed
-        )
-    else:
-        try:
-            if cfg.random_sampler_frac > 0:
-                
-                num_samples = int(len(train_ds) * cfg.random_sampler_frac)
-                sample_weights = train_ds.sample_weights
-                sampler = WeightedRandomSampler(sample_weights, num_samples= num_samples )
-            else:
-                sampler = None
-        except:
-            sampler = None
-            
-            
-    if cfg.use_custom_batch_sampler:
-        sampler = RandomSampler(train_ds)
-        bsampler = CustomBatchSampler(sampler, batch_size =cfg.batch_size, drop_last=cfg.drop_last)
-        train_dataloader = DataLoader(
-            train_ds,
-            batch_sampler=bsampler,
-#             shuffle=(sampler is None),
-#             batch_size=cfg.batch_size,
-            num_workers=cfg.num_workers,
-            pin_memory=cfg.pin_memory,
-            collate_fn=cfg.tr_collate_fn,
-#             drop_last=cfg.drop_last,
-            worker_init_fn=worker_init_fn,
-        )
-    else:
-        train_dataloader = DataLoader(
-            train_ds,
-            sampler=sampler,
-            shuffle=(sampler is None),
-            batch_size=cfg.batch_size,
-            num_workers=cfg.num_workers,
-            pin_memory=cfg.pin_memory,
-            collate_fn=cfg.tr_collate_fn,
-            drop_last=cfg.drop_last,
-            worker_init_fn=worker_init_fn,
-        )
-    print(f"train: dataset {len(train_ds)}, dataloader {len(train_dataloader)}")
-    return train_dataloader
-
-
-def get_val_dataset(val_df, cfg, allowed_targets=None):
-    val_dataset = cfg.CustomDataset(val_df, cfg, aug=val_aug, mode="val")
-    return val_dataset
-
-
-def get_val_dataloader(val_ds, cfg):
-
-    if cfg.distributed and cfg.eval_ddp:
-        sampler = OrderedDistributedSampler(
-            val_ds, num_replicas=cfg.world_size, rank=cfg.local_rank
-        )
-    else:
-        sampler = SequentialSampler(val_ds)
-
-    if cfg.batch_size_val is not None:
-        batch_size = cfg.batch_size_val
-    else:
-        batch_size = cfg.batch_size
-    
-    print(f'valid: dataset\n {val_ds}')
-    val_dataloader = DataLoader(
-        val_ds,
-        sampler=sampler,
-        batch_size=batch_size,
-        num_workers=cfg.num_workers,
-        pin_memory=cfg.pin_memory,
-        collate_fn=cfg.val_collate_fn,
-        worker_init_fn=worker_init_fn,
-    )
-    print(f"valid: dataset {len(val_ds)}, dataloader {len(val_dataloader)}")
-    return val_dataloader
-
-
-def get_test_dataset(test_df, cfg):
-    test_dataset = cfg.CustomDataset(test_df, cfg, aug=val_aug, mode="test")
-    return test_dataset
-
-
-def get_test_dataloader(test_ds, cfg):
-
-    if cfg.distributed and cfg.eval_ddp:
-        sampler = OrderedDistributedSampler(
-            test_ds, num_replicas=cfg.world_size, rank=cfg.local_rank
-        )
-    else:
-        sampler = SequentialSampler(test_ds)
-
-    if cfg.batch_size_val is not None:
-        batch_size = cfg.batch_size_val
-    else:
-        batch_size = cfg.batch_size
-    test_dataloader = DataLoader(
-        test_ds,
-        sampler=sampler,
-        batch_size=batch_size,
-        num_workers=cfg.num_workers,
-        pin_memory=cfg.pin_memory,
-        collate_fn=cfg.val_collate_fn,
-        worker_init_fn=worker_init_fn,
-    )
-    print(f"test: dataset {len(test_ds)}, dataloader {len(test_dataloader)}")
-    return test_dataloader
-
-
-
-def get_optimizer(model, cfg):
+def get_optimizer(
+        model, 
+        lr,
+        optimizer_name="Adam",
+        weight_decay=0.0,
+        sgd_momentum=0.9,
+        sgd_nesterov=False,
+    ):
 
     params = model.parameters()
 
-    if cfg.optimizer == "Adam":
-        optimizer = optim.Adam(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
+    if optimizer_name == "Adam":
+        optimizer = optim.Adam(params, lr=lr, weight_decay=weight_decay)
    
-    elif cfg.optimizer == "AdamW_plus":
+    elif optimizer_name == "AdamW_plus":
         paras = list(model.named_parameters())
         no_decay = ["bias", "LayerNorm.bias"]
         params = [{"params": [param for name, param in paras if (not any(nd in name for nd in no_decay))],
-                   "lr": cfg.lr,
-                   "weight_decay":cfg.weight_decay},
+                   "lr": lr,
+                   "weight_decay":weight_decay},
                   {"params": [param for name, param in paras if (any(nd in name for nd in no_decay))],
-                   "lr": cfg.lr,
-                   "weight_decay":0.},
+                   "lr": lr,
+                   "weight_decay":0.0},
                  ]        
-        optimizer = optim.AdamW(params, lr=cfg.lr)         
+        optimizer = optim.AdamW(params, lr=lr)         
 
         
-    elif cfg.optimizer == "AdamW":
-        optimizer = optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
+    elif optimizer_name == "AdamW":
+        optimizer = optim.AdamW(params, lr=lr, weight_decay=weight_decay)
         
-    elif cfg.optimizer == "SGD":
+    elif optimizer_name == "SGD":
         optimizer = optim.SGD(
             params,
-            lr=cfg.lr,
-            momentum=cfg.sgd_momentum,
-            nesterov=cfg.sgd_nesterov,
-            weight_decay=cfg.weight_decay,
+            lr=lr,
+            momentum=sgd_momentum,
+            nesterov=sgd_nesterov,
+            weight_decay=weight_decay,
         )
 
     return optimizer
 
 
 
-def get_scheduler(cfg, optimizer, total_steps):
-
-    if cfg.schedule == "steplr":
+def get_scheduler(
+        schedule_name, 
+        optimizer, 
+        total_steps,
+        epochs,
+        epochs_step,
+        batch_size,
+        world_size,
+        warmup,
+        num_cycles
+    ):
+    if schedule_name == "steplr":
         scheduler = optim.lr_scheduler.StepLR(
             optimizer,
-            step_size=cfg.epochs_step * (total_steps // cfg.batch_size) // cfg.world_size,
+            step_size=epochs_step * (total_steps // batch_size) // world_size,
             gamma=0.5,
         )
-    elif cfg.schedule == "cosine":
+    elif schedule_name == "cosine":
         scheduler = get_cosine_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=cfg.warmup * (total_steps // cfg.batch_size) // cfg.world_size,
-            num_training_steps=cfg.epochs * (total_steps // cfg.batch_size) // cfg.world_size,
-            num_cycles = cfg.num_cycles
+            num_warmup_steps=warmup * (total_steps // batch_size) // world_size,
+            num_training_steps=epochs * (total_steps // batch_size) // world_size,
+            num_cycles = num_cycles
         )
-    elif cfg.schedule == "linear":
+    elif schedule_name == "linear":
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=0,
-            num_training_steps=cfg.epochs * (total_steps // cfg.batch_size) // cfg.world_size,
+            num_training_steps=epochs * (total_steps // batch_size) // world_size,
         )
         
-    elif cfg.schedule == "CosineAnnealingLR":
+    elif schedule_name == "CosineAnnealingLR":
         T_max = int(np.ceil(0.5*total_steps))
         scheduler = lr_scheduler.CosineAnnealingLR(optimizer,
                                                    T_max=T_max, 
                                                    eta_min=1e-8)
-
-#         print("num_steps", (total_steps // cfg.batch_size) // cfg.world_size)
         
     else:
         scheduler = None
@@ -475,53 +308,6 @@ def read_df(fn):
         #print(fn)
     return df
 
-def get_data(cfg):
-
-    # setup dataset
-    if type(cfg.train_df) == list:
-        cfg.train_df = cfg.train_df[cfg.fold]
-    print(f"reading {cfg.train_df}")
-    df = read_df(cfg.train_df)
-
-    if cfg.test:
-        test_df = read_df(cfg.test_df)
-    else:
-        test_df = None
-    
-    if cfg.val_df:
-        if type(cfg.val_df) == list:
-            cfg.val_df = cfg.val_df[cfg.fold]
-        val_df = read_df(cfg.val_df)
-        if cfg.fold > -1:
-            if 'fold' in val_df.columns:
-                val_df = val_df[val_df["fold"] == cfg.fold]  
-                train_df = df[df["fold"] != cfg.fold]   
-            else:
-                train_df = df             
-        else:
-            train_df = df
-    else:
-        if cfg.fold == -1:
-            val_df = df[df["fold"] == 0]
-        else:
-            val_df = df[df["fold"] == cfg.fold]    
-        
-        train_df = df[df["fold"] != cfg.fold]
-        
-    print(f'train df\n {len(train_df)}')
-    print(f'val df\n {len(val_df)}')
-    
-    return train_df, val_df, test_df
-
-
-def flatten(t):
-    return [item for sublist in t for item in sublist]
-
-def set_pandas_display():
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.max_rows',10000)
-    pd.set_option('display.width', 10000)
-    pd.set_option('display.float_format', lambda x: '%.3f' % x)
 
 def dumpobj(file, obj):
     with open(file, 'wb') as handle:

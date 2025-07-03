@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.distributions import Beta
 
-def get_basic_transform_list(keys: list=["image"]):
+def get_basic_transform_list(keys: list=["input"]):
     """
     Get the augmentation transforms for training and validation.
     Args:
@@ -22,33 +22,33 @@ def get_basic_transform_list(keys: list=["image"]):
 train_aug = monai.transforms.Compose([
     *get_basic_transform_list(),
     monai.transforms.RandSpatialCropSamplesd(
-        keys=["image", "label"],
+        keys=["input", "target"],
         roi_size=(96, 96, 96),
         num_samples=4
     ),
     monai.transforms.RandFlipd(
-        keys=["image", "label"],
+        keys=["input", "target"],
         prob=0.5,
         spatial_axis=0,
     ),
     monai.transforms.RandFlipd(
-        keys=["image", "label"],
+        keys=["input", "target"],
         prob=0.5,
         spatial_axis=1,
     ),
     monai.transforms.RandFlipd(
-        keys=["image", "label"],
+        keys=["input", "target"],
         prob=0.5,
         spatial_axis=2,
     ),
     monai.transforms.RandRotate90d(
-        keys=["image", "label"],
+        keys=["input", "target"],
         prob=0.75,
         max_k=3,
         spatial_axes=(0, 1),
     ),
     monai.transforms.RandRotated(
-        keys=["image", "label"], 
+        keys=["input", "target"], 
         prob=0.5,range_x=0.78,
         range_y=0.,range_z=0., 
         padding_mode='reflection'
@@ -59,7 +59,7 @@ train_aug = monai.transforms.Compose([
 val_aug = monai.transforms.Compose([
     *get_basic_transform_list(),
     monai.transforms.GridPatchd(
-        keys=["image","label"],
+        keys=["input", "target"],
         patch_size=(96, 96, 96), 
         pad_mode='reflect')
     ])

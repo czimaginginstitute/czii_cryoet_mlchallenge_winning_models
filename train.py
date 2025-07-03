@@ -1,26 +1,18 @@
-import glob
-import sys
-import math
-import json
 import argparse
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 import pytorch_lightning as pl
-import torchmetrics
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 import numpy as np
-from torch.nn.utils.rnn import pad_sequence
-from typing import List
 import monai
 from torch.utils.data import DataLoader
 from czii_cryoet_models.model import LitNet
 from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.copick_dataset import CopickDataset, TrainDataset
 from czii_cryoet_models.data.augmentation import train_aug, get_basic_transform_list
+from czii_cryoet_models.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS
+
 
 
 def worker_init_fn(worker_id):
@@ -75,38 +67,21 @@ class DataModule(pl.LightningDataModule):
         self.train_dataset = TrainDataset(
             copick_root = self.copick_root,
             transforms = train_aug,
-            run_names = ['TS_5_4', 'TS_6_4', 'TS_6_6', 'TS_69_2', 'TS_73_6', 'TS_86_3', 'TS_99_9'],
-            classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle'],      
+            run_names = ['TS_5_4', 'TS_6_4', 'TS_6_6', 'TS_69_2', 'TS_73_6', 'TS_86_3', 'TS_99_9'], #'TS_100_3', 'TS_101_5', 'TS_102_2', 'TS_103_4', 'TS_103_5', 'TS_105_5', 'TS_105_7', 'TS_106_7', 'TS_107_1'],     
             pixelsize = 10.012,
-            n_aug=40
+            n_aug=16, #1112
+            crop_radius = 2
         )
 
         self.val_dataset = CopickDataset(
             copick_root = self.copick_root,
-            run_names = ['TS_5_4', 'TS_6_4'],
-            classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle'],  
+            run_names = ['TS_106_7', 'TS_100_4'], #['TS_100_4', 'TS_100_6', 'TS_100_7', 'TS_100_9'],
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
             pixelsize = 10.012
         )
-        # train_size = int(0.7 * len(dataset))
-        # val_size = len(dataset) - train_size
-        # print(f'full_dataset {len(dataset)}, train set {train_size}, val set {val_size}')
-
-        # # Set random seed for deterministic dataset split
-        # torch.manual_seed(42)
-        # self.train_dataset, self.val_dataset = random_split(
-        #     dataset, [train_size, val_size]
-        # )
-        
-        
-        
-        
-        # print(f'train_dataset1\n{len(self.train_dataset)}')
-        # self.train_ds = TrainDataset(self.train_dataset)
-        # print(f'train_dataset2\n{len(self.train_ds)}')
 
     def train_dataloader(self):
-        print(f'self.train_dataset {len(self.train_dataset)}')
+        print(f'train_dataset {len(self.train_dataset)}')
         train_dataloader = DataLoader(
             self.train_dataset,   # 1112*4
             #sampler=sampler,
@@ -123,13 +98,13 @@ class DataModule(pl.LightningDataModule):
         return train_dataloader
 
     def val_dataloader(self):
-        print(f'self.val_dataset {len(self.val_dataset)}')
+        print(f'val_dataset {len(self.val_dataset)}')
         val_dataloader = DataLoader(
             self.val_dataset,   # 1112*4
             #sampler=sampler,
             #shuffle=(sampler is None),
-            batch_size=2, #self.batch_size,  # 8
-            num_workers=2,  # one worker per batch
+            batch_size=1, #self.batch_size,  # always 1
+            num_workers=1,  # one worker per batch
             pin_memory=False,
             collate_fn=inference_collate_fn,
             drop_last= True,
@@ -143,7 +118,11 @@ class DataModule(pl.LightningDataModule):
 
 if __name__ == "__main__":
     args = get_args()
+    # ANGSTROMS_IN_PIXEL = args.pixelsize
     copick_root = CopickRootFSSpec.from_file(args.copick_config)
+    # CLASS_INDEX_TO_CLASS_NAME = {p.label: p.name for p in copick_root.pickable_objects}
+    # TARGET_SIGMAS = [p.radius / ANGSTROMS_IN_PIXEL for p in copick_root.pickable_objects]
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     data_module = DataModule(copick_root=copick_root, batch_size=args.batch_size)
 
@@ -156,8 +135,8 @@ if __name__ == "__main__":
     )
 
     model = LitNet(        
-        classes = ['apo-ferritin','beta-amylase','beta-galactosidase','ribosome','thyroglobulin','virus-like-particle'],
-        class_weights = np.array([256,256,256,256,256,256,1]),
+        nclasses = len(copick_root.pickable_objects),
+        class_weights = np.array([256,256,256,256,256,256,1]),   # the background class is suppressed
         backbone_args = backbone_args,
         lvl_weights = np.array([0, 0, 0, 1]),
     )
@@ -165,7 +144,7 @@ if __name__ == "__main__":
     # Define Checkpoint Callback
     checkpoint_callback = ModelCheckpoint(
         monitor="val_score",
-        mode="min",
+        mode="max",
         save_top_k=1,
         dirpath=f"{args.output_dir}/checkpoints/",
         filename="best_model"
@@ -181,7 +160,8 @@ if __name__ == "__main__":
         devices=1,
         log_every_n_steps=2,
         callbacks=[checkpoint_callback],
-        logger=logger
+        logger=logger,
+        num_sanity_val_steps=0,
     )
 
     # Train Model

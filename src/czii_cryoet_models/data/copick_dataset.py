@@ -10,7 +10,6 @@ import zarr
 #             self, 
 #             copick_root=None, 
 #             run_names=[], 
-#             classes=[], 
 #             pixelsize=10.012, 
 #             transforms=None, 
 #             n_aug=1112, 
@@ -19,7 +18,7 @@ import zarr
         
 #         self.run_names = run_names
 #         self.root = copick_root
-#         self.class2id = {c: i for i, c in enumerate(classes)}
+#         self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)} 
 #         self.pixelsize = pixelsize
 #         self.transforms = transforms
 #         self.n_aug = n_aug
@@ -37,7 +36,7 @@ import zarr
 #         run = self.root.get_run(run_name)     
 #         zarr_store = run.get_voxel_spacing(10).get_tomogram('denoised').zarr() # <- FSStore
 #         tomogram_array = zarr.open(zarr_store, mode='r')[0]  #.transpose(2, 1, 0)
-#         crop = tomogram_array[:20, :20, :20][:]  # loads chunks 256 x 256 x 256, more chuncks need more time to load    
+#         #crop = tomogram_array[:20, :20, :20][:]  # loads chunks 256 x 256 x 256, more chuncks need more time to load    
 #         shape =  tomogram_array.shape
 #         crop_z, crop_y, crop_x = self.crop_size
 
@@ -51,7 +50,7 @@ import zarr
 #             x0 = np.random.randint(0, shape[2] - crop_x)
 
 #             # Load only small crop
-#             tomogram_crop = tomogram_zarr[z0:z0+crop_z, y0:y0+crop_y, x0:x0+crop_x][:]
+#             tomogram_crop = tomogram_array[z0:z0+crop_z, y0:y0+crop_y, x0:x0+crop_x][:]
 #             #tomogram_crop = tomogram_crop.transpose(2, 1, 0)  
 
 #             # Create small local mask
@@ -77,13 +76,12 @@ import zarr
 #             images.append(sample["image"])
 #             labels.append(sample["label"])
 
-#         images = torch.stack(images)  # (crops_per_sample, C, Z, Y, X)
-#         labels = torch.stack(labels)  # (crops_per_sample, C, Z, Y, X)
-
-#         return {
-#             "input": images,
-#             "target": labels,
+#         data = {
+#             "input": torch.stack([item['image'] for item in sample]),
+#             "target": torch.stack([item['label'] for item in sample]),
 #         }
+
+#         return data
 
 
 class TrainDataset(Dataset):
@@ -91,18 +89,20 @@ class TrainDataset(Dataset):
             self, 
             copick_root=None,
             run_names: list = [],
-            classes: list = [],      
             pixelsize: float = 10.012, 
             transforms=None,
-            n_aug=1112
+            n_aug=1112,
+            crop_radius=5, # in pixels; TODO if None, use points only; if < 1.0, create masks using a ratio of the radius; if > 1.0, create masks using the radius.
         ):
         self.run_names = run_names   # list of metadata dicts (only run_names etc.)
         self.root = copick_root
-        self.class2id = {c:i for i,c in enumerate(classes)}  
+        self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
+        self.class2radius = {p.name:p.radius for p in self.root.pickable_objects}
         self.pixelsize = pixelsize
         self.transforms = transforms
         self.n_aug = n_aug
         self.len = len(run_names) * n_aug
+        self.crop_radius = crop_radius  # in pixels
 
     def __len__(self):
         return self.len
@@ -113,7 +113,7 @@ class TrainDataset(Dataset):
 
         # Lazy load tomogram
         run = self.root.get_run(run_name)
-        tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0)
+        tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0)  # (W, H, D)
 
         locations = []
         classes = []
@@ -124,39 +124,92 @@ class TrainDataset(Dataset):
                     classes.append(self.class2id[pick.pickable_object_name])
 
         locations = np.array(locations) / self.pixelsize
+        if self.crop_radius is not None:
+            locations, classes = self.generate_nonoverlapping_locations(locations, self.crop_radius, classes, tomogram.shape)
+
         mask = np.zeros((len(self.class2id),) + tomogram.shape[-3:])
         mask[classes, locations[:,0].astype(int), locations[:,1].astype(int), locations[:,2].astype(int)] = 1
 
         sample = {
-            "image": tomogram,
-            "label": mask,
+            "input": tomogram,
+            "target": mask,
         }
 
         if self.transforms:
             sample = self.transforms(sample)   # random_crop, flip, rotate, etc.
 
         data = {
-            "input": torch.stack([item['image'] for item in sample]),
-            "target": torch.stack([item['label'] for item in sample]),
+            "input": torch.stack([item["input"] for item in sample]),
+            "target": torch.stack([item["target"] for item in sample]),
         }
 
         return data
+
+    @staticmethod
+    def generate_nonoverlapping_locations(locations, radius, classes, bounding_box):
+        """
+        Args:
+            locations: (N, 3) array of integer [x, y, z] center positions
+            radius: float, radius in voxel units
+            classes: list or array of length N, containing class label for each location
+            bounding_box: tuple (W, H, D)
+
+        Returns:
+            coords: (M, 3) array of [x, y, z] voxel coordinates
+            class_list: list of length M, corresponding class for each voxel
+        """
+        W, H, D = bounding_box
+        mask_accum = np.zeros((D, H, W), dtype=np.uint16)
+
+        r = int(np.ceil(radius))
+        offset_range = np.arange(-r, r + 1)
+        dz, dy, dx = np.meshgrid(offset_range, offset_range, offset_range, indexing="ij")
+        offsets = np.stack([dx, dy, dz], axis=-1).reshape(-1, 3)
+        distances = np.linalg.norm(offsets, axis=1)
+        sphere_offsets = offsets[distances <= radius]
+
+        voxel_to_class = {}  # use dict to map voxel → class
+
+        for center, cls in zip(locations, classes):
+            points = center + sphere_offsets
+
+            valid = (
+                (points[:, 0] >= 0) & (points[:, 0] < W) &
+                (points[:, 1] >= 0) & (points[:, 1] < H) &
+                (points[:, 2] >= 0) & (points[:, 2] < D)
+            )
+            points = points[valid].astype(int)
+
+            x, y, z = points[:, 0], points[:, 1], points[:, 2]
+            np.add.at(mask_accum, (z, y, x), 1)
+
+            for px, py, pz in zip(x, y, z):
+                key = (px, py, pz)
+                if key not in voxel_to_class:
+                    voxel_to_class[key] = cls  # first one wins
+
+        # Final filtering: keep only voxels with count == 1
+        z, y, x = np.where(mask_accum == 1)
+        coords = np.stack([x, y, z], axis=1)
+
+        # Collect classes for each valid coord
+        class_list = [voxel_to_class[(x_, y_, z_)] for x_, y_, z_ in coords]
+
+        return coords, class_list
 
 
 class CopickDataset(Dataset):
     def __init__(
             self, 
             copick_root=None,
-            run_names: list = [],
-            classes: list = [],      
+            run_names: list = [],     
             pixelsize: float = 10.012,
             transforms=None, 
         ):
 
         self.root = copick_root
         self.run_names = run_names
-        self.n_classes = len(classes)
-        self.class2id = {c:i for i,c in enumerate(classes)}  
+        self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)} 
         self.pixelsize = pixelsize
         self.transforms = transforms
         self.pickable_objects = {obj.name: obj.radius for obj in self.root.pickable_objects}
@@ -167,20 +220,7 @@ class CopickDataset(Dataset):
     def __getitem__(self, idx):
         run_name = self.run_names[idx]
         run = self.root.get_run(run_name)
-        tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0)
-        # pick_points = dict()
-        # for pick in run.picks:
-        #     if pick.user_id == "curation":
-        #         points = pick.points
-        #         object_name = pick.pickable_object_name
-        #         radius = self.pickable_objects.get(object_name, None)
-        #         if radius is None:
-        #             print(f"Skipping object {object_name} as it has no radius.")
-        #             continue
-        #         pick_points[object_name] = {
-        #             'points': np.array([[p.location.x, p.location.y, p.location.z] for p in points]) / self.pixelsize,
-        #             'radius': radius
-        #         }
+        tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0) # (W, H, D)
         meta = {'run': run, 'pixelsize': self.pixelsize, 'pickable_objects': self.pickable_objects}
         data = {'meta': meta, 'input': tomogram}
         if self.transforms:
@@ -189,30 +229,6 @@ class CopickDataset(Dataset):
         return data
 
 
-
-# class TrainDataset(Dataset):
-#     def __init__(
-#             self,
-#             data,
-#             transforms=None,
-#             n_aug=1112, 
-#     ):
-#         self.dataset = monai.data.Dataset(data=data, transform=train_aug)
-#         self.transforms = transforms
-#         self.n_aug = n_aug
-#         self.len = len(data)*n_aug
-
-#     def __len__(self):
-#         return self.len
-    
-#     def __getitem__(self, idx):
-#         dataset = self.dataset[idx//self.n_aug]
-#         data_dict = {
-#             "input": torch.stack([item['image'] for item in dataset]), # [4, 1, 96, 96, 96] (minibatch, channel, z, y, x)
-#             "target": torch.stack([item['label'] for item in dataset]),
-#         }  
-
-#         return data_dict
 
 
 
