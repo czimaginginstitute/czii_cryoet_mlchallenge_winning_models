@@ -10,6 +10,7 @@ https://github.com/cellcanvas/album-catalog/blob/main/solutions/copick/compare-p
 import numpy as np
 import pandas as pd
 
+#from scipy.spatial import cKDTree
 from scipy.spatial import KDTree
 
 
@@ -145,6 +146,99 @@ def score(
         aggregate_fbeta = np.mean(fbetas)
     
     return aggregate_fbeta, dict(zip(particle_types,fbetas))
+
+
+def calc_metric(classes, pred_df, gt_df, pre="val"):
+    particles = classes
+    solution = gt_df.copy()
+    solution['id'] = range(len(solution))
+    print(f'cal_metric solution\n{solution['particle_type'].unique()}')
+    
+    submission = pred_df.copy()
+    print(f'pred_df\n{pred_df}')
+    #submission['experiment'] = solution['experiment'].unique()[0]
+    print(solution['experiment'].unique())
+    print(f'unique 0: {solution['experiment'].unique()[0]}')
+    submission['id'] = range(len(submission))
+    print(f'cal_metric submission\n{submission['particle_type'].unique()}')
+
+    best_ths = []
+    for p in particles:
+        sol0a = solution[solution['particle_type']==p].copy()
+        sub0a = submission[submission['particle_type']==p].copy()
+        scores = []
+        ths = np.arange(0,0.5,0.005)
+        for c in ths:
+            scores += [score(
+                        sol0a.copy(),
+                        sub0a[sub0a['conf']>c].copy(),
+                        row_id_column_name = 'id',
+                        distance_multiplier=0.5,
+                        beta=4,weighted = False)[0]]
+        best_th = ths[np.argmax(scores)]
+        best_ths += [best_th]
+    
+    submission_pp = []
+    for th, p in zip(best_ths,particles):
+        submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
+    submission_pp = pd.concat(submission_pp)
+    submission_pp.to_csv(f"val_pred_df_seed.csv",index=False)
+    
+    score_pp, particle_scores = score(
+        solution[solution['particle_type']!='beta-amylase'].copy(),
+        submission_pp.copy(),
+        row_id_column_name = 'id',
+        distance_multiplier=0.5,
+        beta=4)
+    
+    print(f'particle_scores: {particle_scores}')
+    result = {'score_' + k: v for k,v in particle_scores.items()}
+    result['score'] = score_pp
+    print(result)
+
+    return result
+
+
+
+def process_run(reference_picks, candidate_picks, pickable_objects, distance_multiplier=0.5, beta=4.0):    
+    results = {}
+    for particle_type in pickable_objects.keys():
+        if particle_type in reference_picks:
+            reference_points = reference_picks[particle_type]['points']
+            reference_radius = reference_picks[particle_type]['radius']
+        else:
+            reference_points = np.array([])
+            reference_radius = 1  # default radius if not available
+
+        if particle_type in candidate_picks:
+            candidate_points = candidate_picks[particle_type]['points']
+        else:
+            candidate_points = np.array([])
+
+        (avg_distance, precision, recall, fbeta, num_reference, num_candidate, num_matched, 
+            percent_matched_ref, percent_matched_cand, tp, fp, fn) = compute_metrics(
+            reference_points,
+            reference_radius,
+            candidate_points,
+            distance_multiplier,
+            beta
+        )
+        results[particle_type] = {
+            'average_distance': avg_distance,
+            'precision': precision,
+            'recall': recall,
+            'f_beta_score': fbeta,
+            'num_reference_particles': num_reference,
+            'num_candidate_particles': num_candidate,
+            'num_matched_particles': num_matched,
+            'percent_matched_reference': percent_matched_ref,
+            'percent_matched_candidate': percent_matched_cand,
+            'tp': tp,
+            'fp': fp,
+            'fn': fn
+        }
+    return results
+
 
 
 def calc_metric(classes, pred_df, gt_df, pre="val"):

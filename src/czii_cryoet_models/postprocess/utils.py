@@ -8,7 +8,7 @@ from collections import defaultdict
 import torch.nn.functional as F
 import copy
 import pandas as pd
-from czii_cryoet_models.postprocess.metric_old import score, process_run
+from czii_cryoet_models.postprocess.metric import score, process_run
 from czii_cryoet_models.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS, WEIGHTS
 
 from typing import List, Tuple, Union, Any, Iterable, Optional
