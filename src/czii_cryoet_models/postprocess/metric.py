@@ -1,7 +1,3 @@
-import numpy as np
-import torch
-from sklearn.metrics import roc_auc_score
-
 """
 Derived from:
 https://github.com/cellcanvas/album-catalog/blob/main/solutions/copick/compare-picks/solution.py
@@ -12,6 +8,7 @@ import pandas as pd
 
 #from scipy.spatial import cKDTree
 from scipy.spatial import KDTree
+from tqdm import tqdm
 
 
 class ParticipantVisibleError(Exception):
@@ -90,6 +87,11 @@ def score(
     if not set(submission['particle_type'].unique()).issubset(set(weights.keys())):
         raise ParticipantVisibleError('Unrecognized `particle_type`.')
 
+    dupes = solution.duplicated(subset=['experiment', 'x', 'y', 'z'], keep=False)
+    if dupes.any():
+        solution = solution.drop_duplicates(subset=['experiment', 'x', 'y', 'z']) # by default, keep first
+
+    # Now ensure no duplicates remain
     assert solution.duplicated(subset=['experiment', 'x', 'y', 'z']).sum() == 0
     assert particle_radius.keys() == weights.keys()
     
@@ -148,57 +150,6 @@ def score(
     return aggregate_fbeta, dict(zip(particle_types,fbetas))
 
 
-def calc_metric(classes, pred_df, gt_df, pre="val"):
-    particles = classes
-    solution = gt_df.copy()
-    solution['id'] = range(len(solution))
-    print(f'cal_metric solution\n{solution['particle_type'].unique()}')
-    
-    submission = pred_df.copy()
-    print(f'pred_df\n{pred_df}')
-    #submission['experiment'] = solution['experiment'].unique()[0]
-    print(solution['experiment'].unique())
-    print(f'unique 0: {solution['experiment'].unique()[0]}')
-    submission['id'] = range(len(submission))
-    print(f'cal_metric submission\n{submission['particle_type'].unique()}')
-
-    best_ths = []
-    for p in particles:
-        sol0a = solution[solution['particle_type']==p].copy()
-        sub0a = submission[submission['particle_type']==p].copy()
-        scores = []
-        ths = np.arange(0,0.5,0.005)
-        for c in ths:
-            scores += [score(
-                        sol0a.copy(),
-                        sub0a[sub0a['conf']>c].copy(),
-                        row_id_column_name = 'id',
-                        distance_multiplier=0.5,
-                        beta=4,weighted = False)[0]]
-        best_th = ths[np.argmax(scores)]
-        best_ths += [best_th]
-    
-    submission_pp = []
-    for th, p in zip(best_ths,particles):
-        submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
-    submission_pp = pd.concat(submission_pp)
-    submission_pp.to_csv(f"val_pred_df_seed.csv",index=False)
-    
-    score_pp, particle_scores = score(
-        solution[solution['particle_type']!='beta-amylase'].copy(),
-        submission_pp.copy(),
-        row_id_column_name = 'id',
-        distance_multiplier=0.5,
-        beta=4)
-    
-    print(f'particle_scores: {particle_scores}')
-    result = {'score_' + k: v for k,v in particle_scores.items()}
-    result['score'] = score_pp
-    print(result)
-
-    return result
-
-
 
 def process_run(reference_picks, candidate_picks, pickable_objects, distance_multiplier=0.5, beta=4.0):    
     results = {}
@@ -241,27 +192,28 @@ def process_run(reference_picks, candidate_picks, pickable_objects, distance_mul
 
 
 
-def calc_metric(classes, pred_df, gt_df, pre="val"):
-    particles = classes
+def calc_metric(classes, pred_df, gt_df, pre="val", output_dir='./output/jobs/job_0'):
     solution = gt_df.copy()
     solution['id'] = range(len(solution))
-    print(f'cal_metric solution\n{solution['particle_type'].unique()}')
+    #print(f'cal_metric solution\n{solution['particle_type'].unique()}')
     
     submission = pred_df.copy()
-    print(f'pred_df\n{pred_df}')
+    #print(f'pred_df\n{pred_df}')
     #submission['experiment'] = solution['experiment'].unique()[0]
-    print(solution['experiment'].unique())
-    print(f'unique 0: {solution['experiment'].unique()[0]}')
+    #print(solution['experiment'].unique())
+    #print(f'unique 0: {solution['experiment'].unique()[0]}')
     submission['id'] = range(len(submission))
-    print(f'cal_metric submission\n{submission['particle_type'].unique()}')
+    #print(f'cal_metric submission\n{submission['particle_type'].unique()}')
 
     best_ths = []
-    for p in particles:
+    # Find the best probability thresholding for each class
+    print('Finding the best probability thresholding for each class')
+    for p in classes:
         sol0a = solution[solution['particle_type']==p].copy()
         sub0a = submission[submission['particle_type']==p].copy()
         scores = []
         ths = np.arange(0,0.5,0.005)
-        for c in ths:
+        for c in tqdm(ths):
             scores += [score(
                         sol0a.copy(),
                         sub0a[sub0a['conf']>c].copy(),
@@ -272,10 +224,13 @@ def calc_metric(classes, pred_df, gt_df, pre="val"):
         best_ths += [best_th]
     
     submission_pp = []
-    for th, p in zip(best_ths,particles):
+    for th, p in zip(best_ths, classes):
         submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
     submission_pp = pd.concat(submission_pp)
-    submission_pp.to_csv(f"val_pred_df_seed.csv",index=False)
+    submission_pp = submission_pp.sort_values(by='experiment')
+    submission_pp = submission_pp.drop_duplicates(subset=['experiment', 'x', 'y', 'z'])  # by default, keep first
+    print(f'Save predicted results in {output_dir}/val_pred_df_seed.csv')
+    submission_pp.to_csv(f"{output_dir}/val_pred_df_seed.csv",index=False)
     
     score_pp, particle_scores = score(
         solution[solution['particle_type']!='beta-amylase'].copy(),
@@ -284,7 +239,7 @@ def calc_metric(classes, pred_df, gt_df, pre="val"):
         distance_multiplier=0.5,
         beta=4)
     
-    print(f'particle_scores: {particle_scores}')
+    #print(f'particle_scores: {particle_scores}')
     result = {'score_' + k: v for k,v in particle_scores.items()}
     result['score'] = score_pp
     print(result)
