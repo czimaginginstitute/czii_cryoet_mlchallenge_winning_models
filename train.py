@@ -77,7 +77,7 @@ class DataModule(pl.LightningDataModule):
         self.train_dataset = TrainDataset(
             copick_root = self.copick_root,
             transforms = train_aug,
-            run_names = self.train_run_names, #['TS_5_4', 'TS_6_4', 'TS_6_6', 'TS_69_2', 'TS_73_6', 'TS_86_3', 'TS_99_9'], #'TS_100_3', 'TS_101_5', 'TS_102_2', 'TS_103_4', 'TS_103_5', 'TS_105_5', 'TS_105_7', 'TS_106_7', 'TS_107_1'],     
+            run_names = self.train_run_names, 
             pixelsize =  self.pixelsize,
             n_aug=8, #1112,
             crop_radius = 2
@@ -85,7 +85,7 @@ class DataModule(pl.LightningDataModule):
 
         self.val_dataset = CopickDataset(
             copick_root = self.copick_root,
-            run_names = self.val_run_names, #['TS_106_7', 'TS_100_4'], #['TS_100_4', 'TS_100_6', 'TS_100_7', 'TS_100_9'],
+            run_names = self.val_run_names,
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
             pixelsize = self.pixelsize
         )
