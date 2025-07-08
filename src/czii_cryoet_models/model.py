@@ -2,8 +2,9 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
-import copy
+import copy, json
 import pandas as pd
+from pathlib import Path
 from collections import defaultdict
 from czii_cryoet_models.modules.unet import FlexibleUNet
 from czii_cryoet_models.modules.utils import (
@@ -38,6 +39,7 @@ class LitNet(pl.LightningModule):
         mixup_beta: float = 1.0,
         mixup_p: float = 1.0,
         learning_rate: float = 1e-3,
+        output_dir: str = './output/jobs/job_0/',
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -55,6 +57,15 @@ class LitNet(pl.LightningModule):
 
         self.gt_dfs = []
         self.submission_dfs = []
+        self.inference_dfs = []
+        
+        self.avg_train_losses = []
+        self.train_losses = []
+        self.avg_val_losses = []
+        self.val_losses = []
+        self.avg_val_metrics = []
+        self.output_dir = Path(output_dir)
+
 
     def forward(self, x, y=None):
         if self.training and y is not None and torch.rand(1).item() < self.mixup_p:
@@ -76,6 +87,7 @@ class LitNet(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)
+        self.train_losses.append(out["loss"].item())
         return out["loss"]
 
     def validation_step(self, batch, batch_idx):
@@ -93,23 +105,64 @@ class LitNet(pl.LightningModule):
         self.gt_dfs.append(gt_df)
         self.submission_dfs.append(submission_df)
         self.log("val_loss", val_loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.val_losses.append(val_loss)
         return val_loss
 
-    # def predict_step(self, batch, batch_idx, dataloader_idx=0):
-    #     pred, _ = sliding_window(
-    #         inputs=batch["input"],
-    #         predictor=self,
-    #         roi_size=(96, 96, 96),
-    #         sw_batch_size=1,
-    #         n_classes=self.n_classes,
-    #         overlap=(0.21, 0.21, 0.21),
-    #         z_scale=[0.5, 0.5, 0.5],
-    #         verbose=False,
-    #     )
-    #     postprocess_pipeline_val(pred, batch["meta"])
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        # pred, _ = sliding_window(
+        #     inputs=batch["input"],
+        #     predictor=self,
+        #     roi_size=(96, 96, 96),
+        #     sw_batch_size=1,
+        #     n_classes=self.n_classes,
+        #     overlap=(0.21, 0.21, 0.21),
+        #     z_scale=[0.5, 0.5, 0.5],
+        #     verbose=False,
+        # )
+        # inference_df = postprocess_pipeline_val(pred, batch["meta"])
+        # self.inference_dfs.append(inference_df)
+        pred, val_loss = sliding_window(
+            inputs=batch["input"],
+            predictor=self,
+            roi_size=(96, 96, 96),
+            sw_batch_size=1,
+            n_classes=self.n_classes,
+            overlap=(0.0, 0.0, 0.0),
+            z_scale=[0.5, 0.5, 0.5],
+            verbose=False,
+        )
+        gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
+        self.gt_dfs.append(gt_df)
+        self.submission_dfs.append(submission_df)
+
+    
+    def on_predict_epoch_end(self):
+        if self.gt_dfs and self.submission_dfs:
+            gt_df = pd.concat(self.gt_dfs, ignore_index=True)
+            submission_df = pd.concat(self.submission_dfs, ignore_index=True)
+            print(self.output_dir)
+            self.output_dir = Path(self.output_dir)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            score = calc_metric(
+                [
+                    "apo-ferritin", "beta-amylase", "beta-galactosidase",
+                    "ribosome", "thyroglobulin", "virus-like-particle"
+                ],
+                submission_df, 
+                gt_df,
+                output_dir=str(self.output_dir)
+            )
+        
+        self.gt_dfs.clear()
+        self.submission_dfs.clear()
+    
 
     def on_validation_epoch_end(self):
         """Aggregate and log validation metrics."""
+        self.avg_val_losses.append(sum(self.val_losses)/len(self.val_losses))
+        self.val_losses = []
+
         if self.gt_dfs and self.submission_dfs:
             gt_df = pd.concat(self.gt_dfs, ignore_index=True)
             submission_df = pd.concat(self.submission_dfs, ignore_index=True)
@@ -118,12 +171,31 @@ class LitNet(pl.LightningModule):
                     "apo-ferritin", "beta-amylase", "beta-galactosidase",
                     "ribosome", "thyroglobulin", "virus-like-particle"
                 ],
-                submission_df, gt_df
+                submission_df, 
+                gt_df,
+                output_dir=str(self.output_dir)
             )
             self.log("val_score", score["score"], on_epoch=True, prog_bar=True)
+            self.avg_val_metrics.append(score["score"])
 
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        json_file = self.output_dir / 'metrics.json'
+        data = dict()
+        data['avg_train_loss'] = self.avg_train_losses
+        data['avg_val_loss'] = self.avg_val_losses
+        data['avg_val_metric'] = self.avg_val_metrics
+
+        with json_file.open("w") as f:
+            json.dump(data, f, indent=2)
+        
         self.gt_dfs.clear()
         self.submission_dfs.clear()
+    
+    
+    def on_train_epoch_end(self):
+        self.avg_train_losses.append(sum(self.train_losses)/len(self.train_losses))
+        self.train_losses = []
+
 
     def configure_optimizers(self):
         optimizer = get_optimizer(self, self.learning_rate)

@@ -5,6 +5,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
 from torch.utils.data import DataLoader
 import numpy as np
+from pathlib import Path
 import monai
 from torch.utils.data import DataLoader
 from czii_cryoet_models.model import LitNet
@@ -40,6 +41,8 @@ def get_args():
         description = "3D image segmentation",
     )
     parser.add_argument("-c", "--copick_config", help="copick config file path")
+    parser.add_argument("-tts", "--train_run_names", type=str, default="", help="Tomogram dataset run names for training")
+    parser.add_argument("-vts", "--val_run_names", type=str, default="", help="Tomogram dataset run names for validation")
     parser.add_argument("-bs", "--batch_size", type=int, default=8, help="batch size for data loader")
     parser.add_argument("-l", "--learning_rate", type=float, default=1e-4, help="Learning rate for optimizer")
     parser.add_argument("-d", "--debug", action='store_true', help="debugging True/ False")
@@ -50,6 +53,7 @@ def get_args():
     parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for training")
     parser.add_argument("-t", "--train_df", type=str, default="train_folded_v1.csv", help="dataframe file containing label localizations")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving checkpoints")
+    parser.add_argument("-j", "--job_id", type=str, default="job_0", help="Unique id for each run")
     return parser.parse_args()
 
 
@@ -57,27 +61,33 @@ class DataModule(pl.LightningDataModule):
     def __init__(
             self, 
             copick_root = None,
+            train_run_names = None,
+            val_run_names = None,
+            pixelsize = 10.012,
             batch_size: int = 1,
         ):
         super().__init__()
         self.batch_size = batch_size
         self.copick_root = copick_root
+        self.train_run_names = train_run_names
+        self.val_run_names = val_run_names
+        self.pixelsize = pixelsize
 
     def setup(self, stage=None):    # stage='train' only gets called for training
         self.train_dataset = TrainDataset(
             copick_root = self.copick_root,
             transforms = train_aug,
-            run_names = ['TS_5_4', 'TS_6_4', 'TS_6_6', 'TS_69_2', 'TS_73_6', 'TS_86_3', 'TS_99_9'], #'TS_100_3', 'TS_101_5', 'TS_102_2', 'TS_103_4', 'TS_103_5', 'TS_105_5', 'TS_105_7', 'TS_106_7', 'TS_107_1'],     
-            pixelsize = 10.012,
-            n_aug=16, #1112
+            run_names = self.train_run_names, #['TS_5_4', 'TS_6_4', 'TS_6_6', 'TS_69_2', 'TS_73_6', 'TS_86_3', 'TS_99_9'], #'TS_100_3', 'TS_101_5', 'TS_102_2', 'TS_103_4', 'TS_103_5', 'TS_105_5', 'TS_105_7', 'TS_106_7', 'TS_107_1'],     
+            pixelsize =  self.pixelsize,
+            n_aug=8, #1112,
             crop_radius = 2
         )
 
         self.val_dataset = CopickDataset(
             copick_root = self.copick_root,
-            run_names = ['TS_106_7', 'TS_100_4'], #['TS_100_4', 'TS_100_6', 'TS_100_7', 'TS_100_9'],
+            run_names = self.val_run_names, #['TS_106_7', 'TS_100_4'], #['TS_100_4', 'TS_100_6', 'TS_100_7', 'TS_100_9'],
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
-            pixelsize = 10.012
+            pixelsize = self.pixelsize
         )
 
     def train_dataloader(self):
@@ -86,8 +96,8 @@ class DataModule(pl.LightningDataModule):
             self.train_dataset,   # 1112*4
             #sampler=sampler,
             #shuffle=(sampler is None),
-            batch_size=8, #self.batch_size,  # 8
-            num_workers=8,  # one worker per batch
+            batch_size=self.batch_size, #self.batch_size,  # 8
+            num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
             collate_fn=collate_fn,
             drop_last= True,
@@ -103,8 +113,8 @@ class DataModule(pl.LightningDataModule):
             self.val_dataset,   # 1112*4
             #sampler=sampler,
             #shuffle=(sampler is None),
-            batch_size=1, #self.batch_size,  # always 1
-            num_workers=1,  # one worker per batch
+            batch_size=self.batch_size, #self.batch_size
+            num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
             collate_fn=inference_collate_fn,
             drop_last= True,
@@ -124,7 +134,15 @@ if __name__ == "__main__":
     # TARGET_SIGMAS = [p.radius / ANGSTROMS_IN_PIXEL for p in copick_root.pickable_objects]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    data_module = DataModule(copick_root=copick_root, batch_size=args.batch_size)
+    data_module = DataModule(copick_root=copick_root, 
+                             train_run_names=args.train_run_names.split(','), 
+                             val_run_names=args.val_run_names.split(','), 
+                             batch_size=args.batch_size, 
+                             pixelsize=args.pixelsize
+                             )
+    output_dir = Path(f'{args.output_dir}/jobs/{args.job_id}')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f'making output dir {str(output_dir)}')
 
     backbone_args = dict(
         spatial_dims=3,    
@@ -139,6 +157,7 @@ if __name__ == "__main__":
         class_weights = np.array([256,256,256,256,256,256,1]),   # the background class is suppressed
         backbone_args = backbone_args,
         lvl_weights = np.array([0, 0, 0, 1]),
+        output_dir = f'{args.output_dir}/jobs/{args.job_id}'
     )
 
     # Define Checkpoint Callback
