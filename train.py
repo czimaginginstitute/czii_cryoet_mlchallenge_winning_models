@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 import monai
 from torch.utils.data import DataLoader
-from czii_cryoet_models.model import LitNet
+from czii_cryoet_models.model import SegNet
 from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.copick_dataset import CopickDataset, TrainDataset
 from czii_cryoet_models.data.augmentation import train_aug, get_basic_transform_list
@@ -25,7 +25,7 @@ def collate_fn(batch):
     batch_dict = {key:torch.cat([b[key] for b in batch]) for key in keys}
     return batch_dict
 
-def inference_collate_fn(batch):
+def data_collate_fn(batch):
     collated = {}
     for key in batch[0]:
         values = [b[key] for b in batch]
@@ -44,6 +44,7 @@ def get_args():
     parser.add_argument("-tts", "--train_run_names", type=str, default="", help="Tomogram dataset run names for training")
     parser.add_argument("-vts", "--val_run_names", type=str, default="", help="Tomogram dataset run names for validation")
     parser.add_argument("-bs", "--batch_size", type=int, default=8, help="batch size for data loader")
+    parser.add_argument("-n", "--n_aug", type=int, default=1112, help="Data augmentation copy. Default is 1112.")
     parser.add_argument("-l", "--learning_rate", type=float, default=1e-4, help="Learning rate for optimizer")
     parser.add_argument("-d", "--debug", action='store_true', help="debugging True/ False")
     parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file path. Default is None.")
@@ -65,6 +66,7 @@ class DataModule(pl.LightningDataModule):
             val_run_names = None,
             pixelsize = 10.012,
             batch_size: int = 1,
+            n_aug: int = 1112,
         ):
         super().__init__()
         self.batch_size = batch_size
@@ -72,6 +74,7 @@ class DataModule(pl.LightningDataModule):
         self.train_run_names = train_run_names
         self.val_run_names = val_run_names
         self.pixelsize = pixelsize
+        self.n_aug = n_aug
 
     def setup(self, stage=None):    # stage='train' only gets called for training
         self.train_dataset = TrainDataset(
@@ -79,7 +82,7 @@ class DataModule(pl.LightningDataModule):
             transforms = train_aug,
             run_names = self.train_run_names, 
             pixelsize =  self.pixelsize,
-            n_aug=8, #1112,
+            n_aug=self.n_aug,
             crop_radius = 2
         )
 
@@ -113,10 +116,10 @@ class DataModule(pl.LightningDataModule):
             self.val_dataset,   # 1112*4
             #sampler=sampler,
             #shuffle=(sampler is None),
-            batch_size=self.batch_size, #self.batch_size
-            num_workers=self.batch_size,  # one worker per batch
+            batch_size=1, #self.batch_size
+            num_workers=1, 
             pin_memory=False,
-            collate_fn=inference_collate_fn,
+            collate_fn=data_collate_fn,
             drop_last= True,
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
@@ -138,7 +141,8 @@ if __name__ == "__main__":
                              train_run_names=args.train_run_names.split(','), 
                              val_run_names=args.val_run_names.split(','), 
                              batch_size=args.batch_size, 
-                             pixelsize=args.pixelsize
+                             pixelsize=args.pixelsize,
+                             n_aug=args.n_aug
                              )
     output_dir = Path(f'{args.output_dir}/jobs/{args.job_id}')
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -152,11 +156,11 @@ if __name__ == "__main__":
         pretrained=False
     )
 
-    model = LitNet(        
+    model = SegNet(        
         nclasses = len(copick_root.pickable_objects),
         class_weights = np.array([256,256,256,256,256,256,1]),   # the background class is suppressed
         backbone_args = backbone_args,
-        lvl_weights = np.array([0, 0, 0, 1]),
+        lvl_weights = np.array([0, 0, 1, 1]),
         output_dir = f'{args.output_dir}/jobs/{args.job_id}'
     )
 
