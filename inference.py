@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader
-from czii_cryoet_models.model import LitNet
+from czii_cryoet_models.model import SegNet
 from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.copick_dataset import CopickDataset
 from czii_cryoet_models.data.augmentation import get_basic_transform_list
@@ -35,7 +35,7 @@ def collate_fn(batch):
     return batch_dict
 
 
-def inference_collate_fn(batch):
+def data_collate_fn(batch):
     collated = {}
     for key in batch[0]:
         values = [b[key] for b in batch]
@@ -77,7 +77,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size, 
             num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
-            collate_fn=inference_collate_fn,
+            collate_fn=data_collate_fn,
             drop_last= True,
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
@@ -93,15 +93,17 @@ if __name__ == "__main__":
 
     data_module = DataModule(copick_root=copick_root, run_names=args.run_names.split(','), batch_size=args.batch_size, pixelsize=args.pixelsize)
 
-    # Load model from checkpoint
-    model = LitNet.load_from_checkpoint(args.pretrained_weights)
-    model.output_dir = args.output_dir
+    
+    # Load models from checkpoints
+    ensemble_model = SegNet.ensemble_from_checkpoints(args.pretrained_weights)
+    ensemble_model.output_dir = args.output_dir
+    ensemble_model.score_thresholds = {"apo-ferritin": 0.16, "beta-amylase": 0.25, "beta-galactosidase": 0.13, "ribosome": 0.19, "thyroglobulin": 0.18, "virus-like-particle": 0.5}
 
     # Initialize trainer
     trainer = pl.Trainer(devices=1, accelerator="gpu")
 
     # Run prediction
-    predictions = trainer.predict(model, datamodule=data_module)
+    predictions = trainer.predict(ensemble_model, datamodule=data_module)
 
 
 

@@ -5,11 +5,8 @@ import numpy as np
 import copy, json
 import pandas as pd
 from pathlib import Path
-from collections import defaultdict
 from czii_cryoet_models.modules.unet import FlexibleUNet
 from czii_cryoet_models.modules.utils import (
-    count_parameters, 
-    human_format,
     to_ce_target,
 )
 from czii_cryoet_models.loss.dense_cross_entropy import DenseCrossEntropy
@@ -17,19 +14,15 @@ from czii_cryoet_models.data.augmentation import Mixup
 from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val
 from czii_cryoet_models.postprocess.metric import calc_metric
 from czii_cryoet_models.postprocess.utils import (
-    sliding_window, 
-    mean_std_renormalization, 
-    decode_detections_with_nms,
-    postprocess_scores_offsets_into_submission,
-    postprocess_pipeline
+    sliding_window,
+    get_final_submission 
 )
 from czii_cryoet_models.utils.utils import (
     get_optimizer,
-    get_scheduler
 )
 
 
-class LitNet(pl.LightningModule):
+class SegNet(pl.LightningModule):
     def __init__(
         self,
         nclasses: int,
@@ -42,31 +35,63 @@ class LitNet(pl.LightningModule):
         output_dir: str = './output/jobs/job_0/',
     ):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters()  # The parameters will be saved into the checkpoints.
 
-        self.n_classes = nclasses + 1  # +1 for background
+        self.n_classes = nclasses + 1  # add the background channel
         self.model = FlexibleUNet(**backbone_args)
-
         self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
         self.lvl_weights = torch.tensor(lvl_weights, dtype=torch.float32)
-
         self.loss_fn = DenseCrossEntropy(class_weights=self.class_weights)
         self.mixup = Mixup(mixup_beta)
         self.mixup_p = mixup_p
         self.learning_rate = learning_rate
-
+        self.output_dir = Path(output_dir)
+        
+        self.score_thresholds=dict()
+        self.score_thresholds["apo-ferritin"]=-1 #0.16 
+        self.score_thresholds["beta-amylase"]=-1 #0.25 
+        self.score_thresholds["beta-galactosidase"]=-1 #0.13
+        self.score_thresholds["ribosome"]=-1 #0.19 
+        self.score_thresholds["thyroglobulin"]=-1 #0.18
+        self.score_thresholds["virus-like-particle"]=-1 #0.5
+        
         self.gt_dfs = []
         self.submission_dfs = []
         self.inference_dfs = []
-        
+
         self.avg_train_losses = []
         self.train_losses = []
         self.avg_val_losses = []
         self.val_losses = []
         self.avg_val_metrics = []
-        self.output_dir = Path(output_dir)
 
+    
+    @classmethod
+    def load_flexible_checkpoints(cls, checkpoint_path, **kwargs):
+        checkpoint_path = Path(checkpoint_path)
 
+        if checkpoint_path.is_file():
+            return [cls.load_from_checkpoint(str(checkpoint_path), **kwargs)]
+
+        elif checkpoint_path.is_dir():
+            ckpt_files = sorted(checkpoint_path.glob("*.ckpt"))
+            if not ckpt_files:
+                raise FileNotFoundError(f"No checkpoints found in directory: {checkpoint_path}")
+            print(f"[INFO] Loading {len(ckpt_files)} checkpoints from {checkpoint_path}")
+            return [cls.load_from_checkpoint(str(p), **kwargs) for p in ckpt_files]
+
+        else:
+            raise FileNotFoundError(f"Invalid path: {checkpoint_path}")
+    
+    
+    @classmethod
+    def ensemble_from_checkpoints(cls, checkpoint_path, **kwargs):
+        models = cls.load_flexible_checkpoints(checkpoint_path, **kwargs)
+        ensemble_model = models[0]           # Use the first model instance as the wrapper
+        ensemble_model.models = models       # Inject all loaded models into `.models`
+        return ensemble_model
+    
+    
     def forward(self, x, y=None):
         if self.training and y is not None and torch.rand(1).item() < self.mixup_p:
             x, y = self.mixup(x, y)
@@ -74,7 +99,7 @@ class LitNet(pl.LightningModule):
         out = self.model(x)
 
         if y is None:
-            return {"logits": out[-1]}
+            return {"logits": out[-1]} # use the penultimate logits
 
         # Downsample ground truth to match each output level
         ys = [F.adaptive_max_pool3d(y, o.shape[-3:]) for o in out]
@@ -84,23 +109,16 @@ class LitNet(pl.LightningModule):
         loss = (losses * lvl_weights).sum() / lvl_weights.sum()
         return {"loss": loss}
 
+    
     def training_step(self, batch, batch_idx):
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)
         self.train_losses.append(out["loss"].item())
         return out["loss"]
 
+
     def validation_step(self, batch, batch_idx):
-        pred, val_loss = sliding_window(
-            inputs=batch["input"],
-            predictor=self,
-            roi_size=(96, 96, 96),
-            sw_batch_size=1,
-            n_classes=self.n_classes,
-            overlap=(0.0, 0.0, 0.0),
-            z_scale=[0.5, 0.5, 0.5],
-            verbose=False,
-        )
+        pred, val_loss = sliding_window(inputs=batch["input"], predictor=self, n_classes=self.n_classes)
         gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
         self.gt_dfs.append(gt_df)
         self.submission_dfs.append(submission_df)
@@ -110,52 +128,45 @@ class LitNet(pl.LightningModule):
 
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        # pred, _ = sliding_window(
-        #     inputs=batch["input"],
-        #     predictor=self,
-        #     roi_size=(96, 96, 96),
-        #     sw_batch_size=1,
-        #     n_classes=self.n_classes,
-        #     overlap=(0.21, 0.21, 0.21),
-        #     z_scale=[0.5, 0.5, 0.5],
-        #     verbose=False,
-        # )
-        # inference_df = postprocess_pipeline_val(pred, batch["meta"])
-        # self.inference_dfs.append(inference_df)
-        pred, val_loss = sliding_window(
-            inputs=batch["input"],
-            predictor=self,
-            roi_size=(96, 96, 96),
-            sw_batch_size=1,
-            n_classes=self.n_classes,
-            overlap=(0.0, 0.0, 0.0),
-            z_scale=[0.5, 0.5, 0.5],
-            verbose=False,
-        )
-        gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
-        self.gt_dfs.append(gt_df)
-        self.submission_dfs.append(submission_df)
+        with torch.inference_mode():
+            print(f"[INFO] Using ensemble of {len(self.models)} models." if self.models else "[INFO] Single model inference")
 
+            # TTA
+            img = batch["input"]
+            img_flipped = torch.flip(img, [2, 3, 4])
+            preds = []
+
+            models = self.models if self.models else [self]
+
+            for model in models:
+                model.eval().cuda()
+
+                # Get predictions from original and flipped input
+                p1, _ = sliding_window(inputs=img, predictor=model, n_classes=self.n_classes)
+                p2, _ = sliding_window(inputs=img_flipped, predictor=model, n_classes=self.n_classes)
+
+                # Flip p2 back
+                p2 = torch.flip(p2, [1, 2, 3])
+
+                # Average both predictions and store
+                p_avg = (p1 + p2) / 2
+                preds.append(p_avg)
+
+            # Average across all models
+            pred = torch.stack(preds).mean(dim=0)
+
+            # Postprocess and accumulate
+            gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
+            self.gt_dfs.append(gt_df)
+            self.submission_dfs.append(submission_df)
+
+            # inference_df = postprocess_pipeline_val(pred, batch["meta"])
+            # self.inference_dfs.append(inference_df)
     
-    def on_predict_epoch_end(self):
-        if self.gt_dfs and self.submission_dfs:
-            gt_df = pd.concat(self.gt_dfs, ignore_index=True)
-            submission_df = pd.concat(self.submission_dfs, ignore_index=True)
-            print(self.output_dir)
-            self.output_dir = Path(self.output_dir)
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            score = calc_metric(
-                [
-                    "apo-ferritin", "beta-amylase", "beta-galactosidase",
-                    "ribosome", "thyroglobulin", "virus-like-particle"
-                ],
-                submission_df, 
-                gt_df,
-                output_dir=str(self.output_dir)
-            )
-        
-        self.gt_dfs.clear()
-        self.submission_dfs.clear()
+
+    def on_train_epoch_end(self):
+        self.avg_train_losses.append(sum(self.train_losses)/len(self.train_losses))
+        self.train_losses = []
     
 
     def on_validation_epoch_end(self):
@@ -167,13 +178,9 @@ class LitNet(pl.LightningModule):
             gt_df = pd.concat(self.gt_dfs, ignore_index=True)
             submission_df = pd.concat(self.submission_dfs, ignore_index=True)
             score = calc_metric(
-                [
-                    "apo-ferritin", "beta-amylase", "beta-galactosidase",
-                    "ribosome", "thyroglobulin", "virus-like-particle"
-                ],
                 submission_df, 
                 gt_df,
-                output_dir=str(self.output_dir)
+                score_thresholds=self.score_thresholds,
             )
             self.log("val_score", score["score"], on_epoch=True, prog_bar=True)
             self.avg_val_metrics.append(score["score"])
@@ -192,9 +199,30 @@ class LitNet(pl.LightningModule):
         self.submission_dfs.clear()
     
     
-    def on_train_epoch_end(self):
-        self.avg_train_losses.append(sum(self.train_losses)/len(self.train_losses))
-        self.train_losses = []
+    def on_predict_epoch_end(self):
+        self.output_dir = Path(self.output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.submission_dfs:
+            submission_df = pd.concat(self.submission_dfs, ignore_index=True)
+            # If ground truth is also available, compute metric
+            if self.gt_dfs:
+                gt_df = pd.concat(self.gt_dfs, ignore_index=True)
+                score = calc_metric(
+                    submission_df,
+                    gt_df,
+                    score_thresholds=self.score_thresholds
+                )
+
+            # Generate and save the final submission
+            get_final_submission(
+                submission_df,
+                score_thresholds=self.score_thresholds,
+                output_dir=str(self.output_dir)
+            )
+
+            self.gt_dfs.clear()
+            self.submission_dfs.clear()
 
 
     def configure_optimizers(self):
@@ -202,139 +230,3 @@ class LitNet(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
 
-# class LitNet(pl.LightningModule):
-#     def __init__(
-#         self,
-#         nclasses: int,
-#         class_weights: np.ndarray,
-#         backbone_args: dict,
-#         lvl_weights: np.ndarray,
-#         mixup_beta: float = 1.0,
-#         mixup_p: float = 1.0,
-#         learning_rate: float = 1e-3,
-#     ):
-#         super().__init__()
-#         self.save_hyperparameters()
-
-#         self.n_classes = nclasses+1 # add background class
-#         self.model = FlexibleUNet(**backbone_args)
-#         self.class_weights = torch.from_numpy(class_weights).float()
-#         self.lvl_weights = torch.from_numpy(lvl_weights).float()
-#         self.loss_fn = DenseCrossEntropy(class_weights=self.class_weights)
-#         self.mixup = Mixup(mixup_beta)
-#         self.mixup_p = mixup_p
-#         self.learning_rate = learning_rate
-#         self.epoch_metrics = {"avg_train_loss": [], "avg_val_loss": [], "avg_val_score": []}
-#         self.gt_dfs = []
-#         self.submission_dfs = []
-
-#     def forward(self, x, y=None):
-#         if self.training and y is not None and torch.rand(1).item() < self.mixup_p:  # random mix-up
-#             x, y = self.mixup(x, y)
-
-#         out = self.model(x)  # list of segmentation maps at different feature levels
-#         outputs = {}
-
-#         if y is not None:
-#             # Compute multiscale loss
-#             ys = [F.adaptive_max_pool3d(y, item.shape[-3:]) for item in out]  # downsample ground-truth point seg mask to match each output level size
-#             losses = torch.stack([
-#                 self.loss_fn(out[i], to_ce_target(ys[i]))[0] for i in range(len(out))
-#             ])
-
-#             lvl_weights = self.lvl_weights.to(losses.device)
-#             loss = (losses * lvl_weights).sum() / lvl_weights.sum()
-
-#             outputs['loss'] = loss
-
-#         if not self.training:
-#             outputs['logits'] = out[-1]  # output the segmentation map at the last level (1, 7, 48, 48, 48)
-
-#         return outputs
-
-    
-#     def training_step(self, batch):
-#         outputs = self(batch["input"], batch["target"])
-#         self.log('train_loss', outputs['loss'], on_step=True, on_epoch=True, prog_bar=True)
-#         return outputs['loss']
-    
-    
-#     def validation_step(self, batch):
-#         metas = batch["meta"]
-#         # Sliding window inference, get logits per tomogram
-#         pred, val_loss = sliding_window(
-#             inputs=batch["input"],
-#             predictor=self,
-#             roi_size=(96, 96, 96),
-#             sw_batch_size=1,
-#             n_classes=self.n_classes,
-#             overlap=(0.0, 0.0, 0.0),  # no overlap for validation inference
-#             z_scale=[0.5, 0.5, 0.5],
-#             verbose=False,
-#         )
-#         # pred before postprocess: torch.Size([7, 315, 315, 92])
-#         # W H D torch.Size([2, 1, 630, 630, 184])
-#         gt_df, submission_df = postprocess_pipeline_val(pred, metas)
-#         self.gt_dfs.append(gt_df)
-#         self.submission_dfs.append(submission_df)
-#         #self.log('val_score', f_beta, prog_bar=True, on_step=False, on_epoch=True)
-#         self.log('val_loss', val_loss, prog_bar=True, on_step=True, on_epoch=True)
-#         return val_loss
-    
-
-#     def predict_step(self, batch):
-#         print(batch['input'].shape) # MetaTensor (B, 1, D, H, W)
-#         #targets = batch['target']
-#         metas = batch["meta"]
-
-#         # Sliding window inference, get logits per tomogram
-#         pred, predic_loss = sliding_window(
-#             inputs=batch["input"],
-#             predictor=self,
-#             roi_size=(96, 96, 96),
-#             sw_batch_size=1,
-#             n_classes=self.n_classes,
-#             overlap=(0.21, 0.21, 0.21),  # no overlap for validation inference
-#             z_scale=[0.5, 0.5, 0.5],
-#             verbose=False,
-#         )
-#         D, H, W = batch["input"].shape[-3:]
-#         postprocess_pipeline_val(pred, metas)
-#         #postprocess_pipeline(pred, metas, D, H, W, mode='inference')
-
-    
-#     def on_train_epoch_end(self):
-#         avg_loss = self.trainer.callback_metrics[f"train_loss"].item()
-#         self.epoch_metrics[f"avg_train_loss"].append(avg_loss)
-
-
-#     def on_validation_epoch_end(self):
-#         """
-#         Args:
-#             outputs: list of dicts from validation_step
-#         """
-#         final_gt_df = pd.concat(self.gt_dfs, ignore_index=True)
-#         final_submission_df = pd.concat(self.submission_dfs, ignore_index=True)
-#         score_dict = calc_metric(["apo-ferritin", "beta-amylase", "beta-galactosidase", "ribosome", "thyroglobulin", "virus-like-particle"], final_submission_df, final_gt_df)
-#         self.log('val_score', score_dict["score"], prog_bar=True, on_step=False, on_epoch=True)
-#         avg_loss = self.trainer.callback_metrics[f"val_loss"].item()
-#         self.epoch_metrics[f"avg_val_loss"].append(avg_loss)
-#         self.gt_dfs = []
-#         self.submission_dfs = []
-
-    
-#     def configure_optimizers(self):
-#         optimizer = get_optimizer(
-#             self, 
-#             self.learning_rate, 
-#             sgd_momentum=0.0,
-#             sgd_nesterov=False
-#         )
-#         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
-#         #scheduler = get_scheduler()
-
-#         return {
-#             "optimizer": optimizer,
-#             "lr_scheduler": scheduler,
-#             "monitor": "val_loss"
-#         }
