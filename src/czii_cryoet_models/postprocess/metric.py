@@ -9,6 +9,7 @@ import pandas as pd
 #from scipy.spatial import cKDTree
 from scipy.spatial import KDTree
 from tqdm import tqdm
+from czii_cryoet_models.postprocess.utils import get_final_submission
 
 
 class ParticipantVisibleError(Exception):
@@ -192,46 +193,37 @@ def process_run(reference_picks, candidate_picks, pickable_objects, distance_mul
 
 
 
-def calc_metric(classes, pred_df, gt_df, pre="val", output_dir='./output/jobs/job_0'):
+def calc_metric(
+        pred_df: pd.DataFrame, 
+        gt_df: pd.DataFrame, 
+        score_thresholds: dict={}, 
+        output_dir: str='./output/jobs/job_0') -> dict:
+    
     solution = gt_df.copy()
     solution['id'] = range(len(solution))
-    #print(f'cal_metric solution\n{solution['particle_type'].unique()}')
-    
     submission = pred_df.copy()
-    #print(f'pred_df\n{pred_df}')
-    #submission['experiment'] = solution['experiment'].unique()[0]
-    #print(solution['experiment'].unique())
-    #print(f'unique 0: {solution['experiment'].unique()[0]}')
     submission['id'] = range(len(submission))
-    #print(f'cal_metric submission\n{submission['particle_type'].unique()}')
-
-    best_ths = []
+    best_ths = {k: v for k, v in score_thresholds.items() if v > 0}
     # Find the best probability thresholding for each class
-    print('Finding the best probability thresholding for each class')
-    for p in classes:
-        sol0a = solution[solution['particle_type']==p].copy()
-        sub0a = submission[submission['particle_type']==p].copy()
-        scores = []
-        ths = np.arange(0,0.5,0.005)
-        for c in tqdm(ths):
-            scores += [score(
-                        sol0a.copy(),
-                        sub0a[sub0a['conf']>c].copy(),
-                        row_id_column_name = 'id',
-                        distance_multiplier=0.5,
-                        beta=4,weighted = False)[0]]
-        best_th = ths[np.argmax(scores)]
-        best_ths += [best_th]
+    for p in score_thresholds.keys():
+        if p not in best_ths:
+            print(f'Finding the best threshold for {p}')
+            sol0a = solution[solution['particle_type']==p].copy()
+            sub0a = submission[submission['particle_type']==p].copy()
+            scores = []
+            ths = np.arange(0,0.5,0.005)
+            for c in tqdm(ths):
+                scores += [score(
+                            sol0a.copy(),
+                            sub0a[sub0a['conf']>c].copy(),
+                            row_id_column_name = 'id',
+                            distance_multiplier=0.5,
+                            beta=4,weighted = False)[0]]
+            best_th = ths[np.argmax(scores)]
+            best_ths[p] = best_th
     
-    submission_pp = []
-    for th, p in zip(best_ths, classes):
-        submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
-    submission_pp = pd.concat(submission_pp)
-    submission_pp = submission_pp.sort_values(by='experiment')
-    submission_pp = submission_pp.drop_duplicates(subset=['experiment', 'x', 'y', 'z'])  # by default, keep first
-    print(f'Save predicted results in {output_dir}/val_pred_df_seed.csv')
-    submission_pp.to_csv(f"{output_dir}/val_pred_df_seed.csv",index=False)
-    
+    print(f'Best score threshold values {best_ths}')
+    submission_pp = get_final_submission(submission, score_thresholds=best_ths, output_dir=output_dir)
     score_pp, particle_scores = score(
         solution[solution['particle_type']!='beta-amylase'].copy(),
         submission_pp.copy(),

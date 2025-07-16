@@ -30,31 +30,31 @@ def predict_volume(
     ):
     classes = pickable_objects.keys()
     img = logits[None].cuda()  # (1, 7, 315, 315, 92)
-    img = torch.nn.functional.interpolate(img, size=dim, mode='trilinear', align_corners=False) # upsize to (1, 7, 630, 630, 184)
-    w, h, d = img.shape[-3:] 
-    resized_img = torch.nn.functional.interpolate(img, size=(w//2,h//2,d//2), mode='trilinear', align_corners=False) # downsize to (1, 7, 315, 315, 92)
-    preds = resized_img[0].softmax(0)[:-1] # (6, 315, 315, 92), remove the background channel
+    resized_img = torch.nn.functional.interpolate(img, size=dim, mode='trilinear', align_corners=False) # upsize to (1, 7, 630, 630, 184)
+    #resized_img = torch.nn.functional.interpolate(img, size=(w//2,h//2,d//2), mode='trilinear', align_corners=False) # downsize to (1, 7, 315, 315, 92)
+    preds = resized_img[0].softmax(0)[:-1] # remove the background channel
     pred_df = []
+ 
     for i,p in enumerate(classes):
         p1 = preds[i][None].cuda()
         y = simple_nms(p1, nms_radius=int(0.5 * pickable_objects[p]/pixelsize))  # score of maximum points
         kps = torch.where(y > 0)
-        coords = torch.stack(kps[1:], -1) * pixelsize * 2 # (x,y,z) coordinates in the origianl tomogram size
+        coords = torch.stack(kps[1:], -1) * pixelsize #* 2 # (x,y,z) coordinates in the origianl tomogram size
         conf = y[kps]  # probability of the predicted points
         pred_df_ = pd.DataFrame(coords.cpu().numpy(),columns=['x','y','z'])
         pred_df_['particle_type'] = p
         pred_df_['experiment'] = run_name
         pred_df_['conf'] = conf.cpu().numpy()
         pred_df += [pred_df_]
+        
     pred_df = pd.concat(pred_df)
-    pred_df = pred_df[(pred_df['x']<dim[0]*pixelsize) & (pred_df['y']<dim[1]*pixelsize)& (pred_df['z']<dim[2]*pixelsize) & (pred_df['conf']>0.01)].copy()  # hardcore thresholding, keep prob > 0.01
+    pred_df = pred_df[(pred_df['x']<dim[0]*pixelsize) & (pred_df['y']<dim[1]*pixelsize) & (pred_df['z']<dim[2]*pixelsize)].copy() 
 
     return pred_df
 
 
 
 def postprocess_pipeline_val(pred, metas):
-    # No TTA during validation step (to keep it fast)
     # Apply softmax and interpolate back to original size (7, 315, 315, 92) -> (1, 7, 630, 630, 184)
     gt_dfs = []
     submission_dfs = []
