@@ -68,7 +68,9 @@ class SegNet(pl.LightningModule):
         self.train_losses = []
         self.avg_val_losses = []
         self.val_losses = []
-        self.avg_val_metrics = []
+        self.val_scores = []
+        self.best_val_scores = {'score': 0.0}
+        self.best_score_thresholds = dict()
 
     
     @classmethod
@@ -217,20 +219,25 @@ class SegNet(pl.LightningModule):
         if self.gt_dfs and self.submission_dfs:
             gt_df = pd.concat(self.gt_dfs, ignore_index=True)
             submission_df = pd.concat(self.submission_dfs, ignore_index=True)
-            score = calc_metric(
+            scores, ths = calc_metric(
                 submission_df, 
                 gt_df,
                 score_thresholds=self.score_thresholds,
             )
-            self.log("val_score", score["score"], on_epoch=True, prog_bar=True)
-            self.avg_val_metrics.append(score["score"])
+            self.log("val_score", scores['score'], on_epoch=True, prog_bar=True)
+            self.val_scores.append(scores)
+            if scores['score'] >= self.best_val_scores['score']:
+                self.best_val_scores = scores
+                self.best_score_thresholds = ths
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         json_file = self.output_dir / 'metrics.json'
         data = dict()
         data['avg_train_loss'] = self.avg_train_losses
         data['avg_val_loss'] = self.avg_val_losses
-        data['avg_val_metric'] = self.avg_val_metrics
+        data['val_scores'] = self.val_scores
+        data['best_val_score'] = self.best_val_scores
+        data['best_score_thresholds'] = self.best_score_thresholds
 
         with json_file.open("w") as f:
             json.dump(data, f, indent=2)
@@ -248,7 +255,7 @@ class SegNet(pl.LightningModule):
             # If ground truth is also available, compute metric
             if self.gt_dfs:
                 gt_df = pd.concat(self.gt_dfs, ignore_index=True)
-                score = calc_metric(
+                score, ths = calc_metric(
                     submission_df,
                     gt_df,
                     score_thresholds=self.score_thresholds
