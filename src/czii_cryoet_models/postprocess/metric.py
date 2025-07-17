@@ -211,7 +211,7 @@ def calc_metric(
             sol0a = solution[solution['particle_type']==p].copy()
             sub0a = submission[submission['particle_type']==p].copy()
             scores = []
-            ths = np.arange(0,0.5,0.005)
+            ths = np.arange(0.05,0.5,0.005) # prevent over picks; can take a long time if two many picks 
             for c in tqdm(ths):
                 scores += [score(
                             sol0a.copy(),
@@ -236,4 +236,4 @@ def calc_metric(
     result['score'] = score_pp
     print(result)
 
-    return result
+    return result, best_ths
