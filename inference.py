@@ -22,6 +22,7 @@ def get_args():
     parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file path. Default is None.")
     parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving prediction results (csv).")
+    parser.add_argument("-g", "--gpus", type=int, default=1, help="Number of GPUs for inference. Default is 1.")
     return parser.parse_args()
 
 
@@ -100,10 +101,11 @@ if __name__ == "__main__":
     ensemble_model.score_thresholds = {"apo-ferritin": 0.16, "beta-amylase": 0.25, "beta-galactosidase": 0.13, "ribosome": 0.19, "thyroglobulin": 0.18, "virus-like-particle": 0.5}
 
     # Initialize trainer
-    trainer = pl.Trainer(devices=1, accelerator="gpu")
+    trainer = pl.Trainer(devices=1, accelerator="gpu") if args.gpus == 1 else pl.Trainer(devices=args.gpus, accelerator="gpu", strategy="ddp")
 
     # Run prediction
     predictions = trainer.predict(ensemble_model, datamodule=data_module)
+
 
 
 
