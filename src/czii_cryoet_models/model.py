@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
-import copy, json
+import json
 import pandas as pd
 from pathlib import Path
 from czii_cryoet_models.modules.unet import FlexibleUNet
@@ -11,6 +11,7 @@ from czii_cryoet_models.modules.utils import (
 )
 from czii_cryoet_models.loss.dense_cross_entropy import DenseCrossEntropy
 from czii_cryoet_models.data.augmentation import Mixup
+from czii_cryoet_models.utils.ema import ModelEMA
 from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val
 from czii_cryoet_models.postprocess.metric import calc_metric
 from czii_cryoet_models.postprocess.utils import (
@@ -33,12 +34,16 @@ class SegNet(pl.LightningModule):
         mixup_p: float = 1.0,
         learning_rate: float = 1e-3,
         output_dir: str = './output/jobs/job_0/',
+        ema_decay: float = 0.999,
+        ema_start_epoch: int = 5,
     ):
         super().__init__()
         self.save_hyperparameters()  # The parameters will be saved into the checkpoints.
 
         self.n_classes = nclasses + 1  # add the background channel
         self.model = FlexibleUNet(**backbone_args)
+        self.ema = ModelEMA(self.model, decay=ema_decay)
+        self.ema_start_epoch = ema_start_epoch
         self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
         self.lvl_weights = torch.tensor(lvl_weights, dtype=torch.float32)
         self.loss_fn = DenseCrossEntropy(class_weights=self.class_weights)
@@ -105,19 +110,22 @@ class SegNet(pl.LightningModule):
         ys = [F.adaptive_max_pool3d(y, o.shape[-3:]) for o in out]
         losses = torch.stack([self.loss_fn(o, to_ce_target(ys[i]))[0] for i, o in enumerate(out)])
         lvl_weights = self.lvl_weights.to(losses.device)
-
         loss = (losses * lvl_weights).sum() / lvl_weights.sum()
+
         return {"loss": loss}
 
     
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx: int, dataloader_idx: int=0):
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)
         self.train_losses.append(out["loss"].item())
+        if self.current_epoch >= self.ema_start_epoch:
+            self.ema.update(self.model)
+        
         return out["loss"]
 
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx: int, dataloader_idx: int=0):
         pred, val_loss = sliding_window(inputs=batch["input"], predictor=self, n_classes=self.n_classes)
         gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
         self.gt_dfs.append(gt_df)
@@ -127,7 +135,42 @@ class SegNet(pl.LightningModule):
         return val_loss
 
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    def predict_step(self, batch, batch_idx: int, dataloader_idx: int=0):
+        with torch.inference_mode():
+            print(f"[INFO] GPU {self.device} | Using ensemble of {len(self.models)} models." if hasattr(self, 'models') else "[INFO] Single model inference")
+
+            # Input batch for this GPU
+            img = batch["input"]                        # Shape: [B, C, D, H, W]
+            img_flipped = torch.flip(img, [2, 3, 4])    # TTA
+            preds = []
+
+            # Get models to run (either ensemble or self)
+            models = getattr(self, "models", [self])
+
+            for model in models:
+                model.eval()
+
+                # Use model on same device as input (avoid .cuda())
+                p1, _ = sliding_window(inputs=img, predictor=model, n_classes=self.n_classes)
+                p2, _ = sliding_window(inputs=img_flipped, predictor=model, n_classes=self.n_classes)
+                p2 = torch.flip(p2, [1, 2, 3])  # Flip back
+
+                p_avg = (p1 + p2) / 2
+                preds.append(p_avg)
+
+            pred = torch.stack(preds).mean(dim=0)
+
+            # Postprocess for this GPU's batch only
+            gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
+            self.gt_dfs.append(gt_df)
+            self.submission_dfs.append(submission_df)
+
+            # inference_df = postprocess_pipeline_val(pred, batch["meta"])
+            # self.inference_dfs.append(inference_df)
+    
+    
+    
+    def predict_step(self, batch):
         with torch.inference_mode():
             print(f"[INFO] Using ensemble of {len(self.models)} models." if self.models else "[INFO] Single model inference")
 
@@ -144,11 +187,8 @@ class SegNet(pl.LightningModule):
                 # Get predictions from original and flipped input
                 p1, _ = sliding_window(inputs=img, predictor=model, n_classes=self.n_classes)
                 p2, _ = sliding_window(inputs=img_flipped, predictor=model, n_classes=self.n_classes)
-
                 # Flip p2 back
                 p2 = torch.flip(p2, [1, 2, 3])
-
-                # Average both predictions and store
                 p_avg = (p1 + p2) / 2
                 preds.append(p_avg)
 
