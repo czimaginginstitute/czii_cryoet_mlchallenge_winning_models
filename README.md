@@ -1,24 +1,67 @@
 # CZII_ML_Challenge_Winning_Models
 The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main) in pytorch-lightning and copick..
 
+
+# Benchmark
+We are able to train 3 models (resnet34 backbones) with 6, 12, and 24 tomograms respectively, and achieved an esenmble score of 0.774. This is comparable to the original submission of the 1st place [kaggle-cryoet-leader-board](https://www.kaggle.com/competitions/czii-cryo-et-object-identification/leaderboard).
+
+
 # Installation
 cd into the root folder, then 
 ```
-pip install -r requirements.txt
 pip install -e .
 ```
 
 
-# Training 
-Traning dataset (localizations) is hard coded file train_folded_v1.csv, need to put in the current working dir. Command example for training: 
+# Training from scratch
+The code support loading data via copick and directly loading zarr data. An example training command is below.
 ```
-python train.py -c COPICK_CONFIG_FILE -o checkpoint 
+python train.py \
+    --copick_config COPICK_CONFIG_FILE \
+    --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
+    --val_run_names TS_5_4 \
+    --batch_size 16 \
+    --n_aug 1112 \
+    --output_dir OUTPUT_PATH \
+    --job_id job_1 \
+    --epochs 100   
+```
+
+# Re-training from a checkpoint
+```
+python train.py \
+    --copick_config COPICK_CONFIG_FILE \
+    --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
+    --val_run_names TS_5_4  \
+    --batch_size 16 \
+    --n_aug 1112 \
+    --output_dir OUTPUT_PATH \
+    --job_id job_1 \
+    --epochs 100 \
+    --pretrained_weight CHECKPOINT_PATH   
 ```
 
 
 # Inference
-Example command for inference with PyTorch checkpoints: 
+An example command for inference with PyTorch checkpoints (a single checkpoint file path or multiple folder paths, each containing mutiple checkpoints) that supports pattern matching. 
 
 ```
-python inference.py -c COPICK_CONFIG_FILE -p checkpoints/fold-1/
+python inference.py \
+    --copick_config copick_config.json \
+    --run_names TS_100_4,TS_100_6,TS_100_7,TS_100_9 \
+    --pretrained_weights FOLDER_PATH1/checkpoints/,FOLDER_PATH2/checkpoints/,FOLDER_PATH3/checkpoints/ \
+    --batch_size 16 \
+    --output_dir OUTPUT_PATH \
+    --pattern *v1.ckpt 
+```
+
+Inference by loading zarr files:
+```
+python inference_custom.py \
+    --file_path FOLDER_PATH_TO_ZARR_FILES \
+    --pretrained_weights oFOLDER_PATH1/checkpoints/,FOLDER_PATH2/checkpoints/,FOLDER_PATH3/checkpoints/ \
+    --batch_size 16 \
+    --output_dir OUTPUT_PATH \
+    --pixelsize PIXEL_SIZE \
+    --pattern *v1.ckpt 
 ```
