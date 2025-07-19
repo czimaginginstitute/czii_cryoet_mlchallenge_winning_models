@@ -47,7 +47,7 @@ def get_args():
     parser.add_argument("-n", "--n_aug", type=int, default=1112, help="Data augmentation copy. Default is 1112.")
     parser.add_argument("-l", "--learning_rate", type=float, default=1e-4, help="Learning rate for optimizer")
     parser.add_argument("-d", "--debug", action='store_true', help="debugging True/ False")
-    parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file path. Default is None.")
+    parser.add_argument("-p", "--pretrained_weight", type=str, default="", help="One pretrained weights file path. Default is None.")
     parser.add_argument("-e", "--epochs", type=int, default=100, help="Number of epochs. Default is 100.")
     parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
     parser.add_argument("--distributed", type=bool, default=False, help="Distributed training, default is False.")
@@ -148,21 +148,25 @@ if __name__ == "__main__":
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f'making output dir {str(output_dir)}')
 
-    backbone_args = dict(
-        spatial_dims=3,    
-        in_channels=1,
-        out_channels=6,
-        backbone='resnet34',
-        pretrained=False
-    )
+    
+    if args.pretrained_weight:
+        model = SegNet.load_from_checkpoint(args.pretrained_weight)
+    else:
+        backbone_args = dict(
+            spatial_dims=3,    
+            in_channels=1,
+            out_channels=6,
+            backbone='resnet34',
+            pretrained=False
+        )
 
-    model = SegNet(        
-        nclasses = len(copick_root.pickable_objects),
-        class_weights = np.array([256,256,256,256,256,256,1]),   # the background class is suppressed
-        backbone_args = backbone_args,
-        lvl_weights = np.array([0, 0, 1, 1]),
-        output_dir = f'{args.output_dir}/jobs/{args.job_id}'
-    )
+        model = SegNet(        
+            nclasses = len(copick_root.pickable_objects),
+            class_weights = np.array([256,256,256,256,256,256,1]),   # the background class is suppressed
+            backbone_args = backbone_args,
+            lvl_weights = np.array([0, 0, 1, 1]),
+            output_dir = f'{args.output_dir}/jobs/{args.job_id}'
+        )
 
     # Define Checkpoint Callback
     checkpoint_callback = ModelCheckpoint(

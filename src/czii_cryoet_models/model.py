@@ -12,7 +12,7 @@ from czii_cryoet_models.modules.utils import (
 from czii_cryoet_models.loss.dense_cross_entropy import DenseCrossEntropy
 from czii_cryoet_models.data.augmentation import Mixup
 from czii_cryoet_models.utils.ema import ModelEMA
-from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val
+from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val, postprocess_pipeline_inference
 from czii_cryoet_models.postprocess.metric import calc_metric
 from czii_cryoet_models.postprocess.utils import (
     sliding_window,
@@ -62,7 +62,6 @@ class SegNet(pl.LightningModule):
         
         self.gt_dfs = []
         self.submission_dfs = []
-        self.inference_dfs = []
 
         self.avg_train_losses = []
         self.train_losses = []
@@ -74,26 +73,32 @@ class SegNet(pl.LightningModule):
 
     
     @classmethod
-    def load_flexible_checkpoints(cls, checkpoint_path, **kwargs):
-        checkpoint_path = Path(checkpoint_path)
+    def load_flexible_checkpoints(cls, checkpoint_path, pattern='*.ckpt', **kwargs):
+        checkpoint_paths = [Path(p.strip()) for p in checkpoint_path.split(',')]
+        loaded_models = []
 
-        if checkpoint_path.is_file():
-            return [cls.load_from_checkpoint(str(checkpoint_path), **kwargs)]
+        for path in checkpoint_paths:
+            if path.is_file():
+                loaded_models.append(cls.load_from_checkpoint(str(path), **kwargs))
+            elif path.is_dir():
+                ckpt_files = sorted(path.glob(pattern))
+                if not ckpt_files:
+                    raise FileNotFoundError(f"No checkpoints matching pattern '{pattern}' in: {path}")
+                print(f"[INFO] Loading {len(ckpt_files)} checkpoints from {path}")
+                for p in ckpt_files:
+                    loaded_models.append(cls.load_from_checkpoint(str(p), **kwargs))
+            else:
+                raise FileNotFoundError(f"Invalid path: {path}")
 
-        elif checkpoint_path.is_dir():
-            ckpt_files = sorted(checkpoint_path.glob("*.ckpt"))
-            if not ckpt_files:
-                raise FileNotFoundError(f"No checkpoints found in directory: {checkpoint_path}")
-            print(f"[INFO] Loading {len(ckpt_files)} checkpoints from {checkpoint_path}")
-            return [cls.load_from_checkpoint(str(p), **kwargs) for p in ckpt_files]
+        if not loaded_models:
+            raise FileNotFoundError("No valid checkpoints found.")
 
-        else:
-            raise FileNotFoundError(f"Invalid path: {checkpoint_path}")
+        return loaded_models
     
     
     @classmethod
-    def ensemble_from_checkpoints(cls, checkpoint_path, **kwargs):
-        models = cls.load_flexible_checkpoints(checkpoint_path, **kwargs)
+    def ensemble_from_checkpoints(cls, checkpoint_path, pattern='*.ckpt', **kwargs):
+        models = cls.load_flexible_checkpoints(checkpoint_path, pattern=pattern, **kwargs)
         ensemble_model = models[0]           # Use the first model instance as the wrapper
         ensemble_model.models = models       # Inject all loaded models into `.models`
         return ensemble_model
@@ -134,6 +139,7 @@ class SegNet(pl.LightningModule):
         self.submission_dfs.append(submission_df)
         self.log("val_loss", val_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.val_losses.append(val_loss)
+        
         return val_loss
 
 
@@ -163,49 +169,14 @@ class SegNet(pl.LightningModule):
             pred = torch.stack(preds).mean(dim=0)
 
             # Postprocess for this GPU's batch only
-            gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
-            self.gt_dfs.append(gt_df)
+            if batch['dataset_type'] == 'copick':
+                gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
+                self.gt_dfs.append(gt_df)
+            else:
+                submission_df = postprocess_pipeline_inference(pred, batch["meta"])
             self.submission_dfs.append(submission_df)
-
-            # inference_df = postprocess_pipeline_val(pred, batch["meta"])
-            # self.inference_dfs.append(inference_df)
+     
     
-    
-    
-    def predict_step(self, batch):
-        with torch.inference_mode():
-            print(f"[INFO] Using ensemble of {len(self.models)} models." if self.models else "[INFO] Single model inference")
-
-            # TTA
-            img = batch["input"]
-            img_flipped = torch.flip(img, [2, 3, 4])
-            preds = []
-
-            models = self.models if self.models else [self]
-
-            for model in models:
-                model.eval().cuda()
-
-                # Get predictions from original and flipped input
-                p1, _ = sliding_window(inputs=img, predictor=model, n_classes=self.n_classes)
-                p2, _ = sliding_window(inputs=img_flipped, predictor=model, n_classes=self.n_classes)
-                # Flip p2 back
-                p2 = torch.flip(p2, [1, 2, 3])
-                p_avg = (p1 + p2) / 2
-                preds.append(p_avg)
-
-            # Average across all models
-            pred = torch.stack(preds).mean(dim=0)
-
-            # Postprocess and accumulate
-            gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
-            self.gt_dfs.append(gt_df)
-            self.submission_dfs.append(submission_df)
-
-            # inference_df = postprocess_pipeline_val(pred, batch["meta"])
-            # self.inference_dfs.append(inference_df)
-    
-
     def on_train_epoch_end(self):
         self.avg_train_losses.append(sum(self.train_losses)/len(self.train_losses))
         self.train_losses = []
@@ -258,7 +229,8 @@ class SegNet(pl.LightningModule):
                 score, ths = calc_metric(
                     submission_df,
                     gt_df,
-                    score_thresholds=self.score_thresholds
+                    score_thresholds=self.score_thresholds,
+                    output_dir=self.output_dir 
                 )
 
             # Generate and save the final submission

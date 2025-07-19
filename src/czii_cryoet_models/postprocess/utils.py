@@ -126,9 +126,9 @@ def get_final_submission(
     submission_pp = pd.concat(submission_pp)
     submission_pp = submission_pp.sort_values(by='experiment')
     submission_pp = submission_pp.drop_duplicates(subset=['experiment', 'x', 'y', 'z'])  # by default, keep first
-    if output_dir:
-        print(f'Save predicted results in {output_dir}/val_pred_df_seed.csv')
-        submission_pp.to_csv(f"{output_dir}/val_pred_df_seed.csv",index=False)
+    if str(output_dir):
+        print(f'Save predicted results in {str(output_dir)}/val_pred_df_seed.csv')
+        submission_pp.to_csv(f"{str(output_dir)}/val_pred_df_seed.csv",index=False)
     
     return submission_pp
 
