@@ -2,18 +2,20 @@
 The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main) in pytorch-lightning and copick..
 
 
-# Benchmark
+## Benchmark
 We are able to train 3 models (resnet34 backbones) with 6, 12, and 24 tomograms respectively, and achieved an esenmble score of 0.774. This is comparable to the original submission of the 1st place [kaggle-cryoet-leader-board](https://www.kaggle.com/competitions/czii-cryo-et-object-identification/leaderboard).
+![F4 score of each protein complex using different training set sizes](assets/scores.png)
 
 
-# Installation
+
+## Installation
 cd into the root folder, then 
 ```
 pip install -e .
 ```
 
 
-# Training from scratch
+## Training from scratch
 The code support loading data via copick and directly loading zarr data. An example training command is below.
 ```
 python train.py \
@@ -27,7 +29,7 @@ python train.py \
     --epochs 100   
 ```
 
-# Re-training from a checkpoint
+## Re-training from a checkpoint
 ```
 python train.py \
     --copick_config COPICK_CONFIG_FILE \
@@ -42,7 +44,7 @@ python train.py \
 ```
 
 
-# Inference
+## Inference
 An example command for inference with PyTorch checkpoints (a single checkpoint file path or multiple folder paths, each containing mutiple checkpoints) that supports pattern matching. 
 
 ```
