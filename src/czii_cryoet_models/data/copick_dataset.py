@@ -221,8 +221,12 @@ class CopickDataset(Dataset):
         run_name = self.run_names[idx]
         run = self.root.get_run(run_name)
         tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0) # (W, H, D)
-        meta = {'run': run, 'pixelsize': self.pixelsize, 'pickable_objects': self.pickable_objects, 'dim': tomogram.shape}
-        data = {'meta': meta, 'input': tomogram}
+        meta = {'run': run, 
+                'pixelsize': self.pixelsize, 
+                'pickable_objects': self.pickable_objects, 
+                'dim': tomogram.shape
+        }
+        data = {'meta': meta, 'input': tomogram, 'dataset_type': 'copick'}
         if self.transforms:
             data = self.transforms(data)       
         

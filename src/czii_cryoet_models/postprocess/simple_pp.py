@@ -100,8 +100,13 @@ def postprocess_pipeline_inference(pred, metas):
     # Apply softmax and interpolate back to original size (7, 315, 315, 92) -> (1, 7, 630, 630, 184)
     submission_dfs = []
     for meta in metas:
-        print(f'Predicting TS {meta['run'].name}')
-        submission_df = predict_volume(pred, meta['run'].name, meta['pickable_objects'], meta['pixelsize'], meta['dim'])
+        if 'run' in meta:
+            run_name = meta['run'].name
+        elif 'run_name' in meta:
+            run_name = meta['run_name']
+        
+        print(f'Predicting TS {run_name}')
+        submission_df = predict_volume(pred, run_name, meta['pickable_objects'], meta['pixelsize'], meta['dim'])
         submission_dfs.append(submission_df)
 
     final_submission_df = pd.concat(submission_dfs, ignore_index=True)
