@@ -5,10 +5,9 @@ from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.copick_dataset import CopickDataset
 from czii_cryoet_models.data.augmentation import get_basic_transform_list
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger
 from torch.utils.data import DataLoader
 import monai
+from pathlib import Path
 import numpy as np
 import argparse
 
@@ -19,7 +18,8 @@ def get_args():
     parser.add_argument("-c", "--copick_config", help="copick config file path")
     parser.add_argument("-ts", "--run_names", type=str, default="", help="Tomogram dataset run names")
     parser.add_argument("-bs", "--batch_size", type=int, default=1, help="batch size for data loader")
-    parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file path. Default is None.")
+    parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file paths (use comma for multiple paths). Default is None.")
+    parser.add_argument("-pa", "--pattern", type=str, default="*.ckpt", help="The key for pattern matching checkpoints. Default is *.ckpt")
     parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving prediction results (csv).")
     parser.add_argument("-g", "--gpus", type=int, default=1, help="Number of GPUs for inference. Default is 1.")
@@ -94,11 +94,15 @@ if __name__ == "__main__":
 
     data_module = DataModule(copick_root=copick_root, run_names=args.run_names.split(','), batch_size=args.batch_size, pixelsize=args.pixelsize)
 
+    output_dir = Path(f'{args.output_dir}')
+    print(f'making output dir {str(output_dir)}')
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load models from checkpoints
-    ensemble_model = SegNet.ensemble_from_checkpoints(args.pretrained_weights)
+    ensemble_model = SegNet.ensemble_from_checkpoints(args.pretrained_weights, pattern=args.pattern)
     ensemble_model.output_dir = args.output_dir
-    ensemble_model.score_thresholds = {"apo-ferritin": 0.16, "beta-amylase": 0.25, "beta-galactosidase": 0.13, "ribosome": 0.19, "thyroglobulin": 0.18, "virus-like-particle": 0.5}
+    #ensemble_model.score_thresholds = {"apo-ferritin": 0.16, "beta-amylase": 0.25, "beta-galactosidase": 0.13, "ribosome": 0.19, "thyroglobulin": 0.18, "virus-like-particle": 0.5}
+    ensemble_model.score_thresholds = {"apo-ferritin": 0.41, "beta-amylase": 0.36, "beta-galactosidase": 0.41, "ribosome": 0.19, "thyroglobulin": 0.295, "virus-like-particle": 0.24}
 
     # Initialize trainer
     trainer = pl.Trainer(devices=1, accelerator="gpu") if args.gpus == 1 else pl.Trainer(devices=args.gpus, accelerator="gpu", strategy="ddp")
