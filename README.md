@@ -4,7 +4,9 @@ The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-se
 
 ## Benchmark
 We are able to train 3 models (resnet34 backbones) with 6, 12, and 24 tomograms respectively, and achieved an esenmble score of 0.774. This is comparable to the original submission of the 1st place [kaggle-cryoet-leader-board](https://www.kaggle.com/competitions/czii-cryo-et-object-identification/leaderboard).
-![F4 score of each protein complex using different training set sizes](assets/scores.png)
+<p align="center">
+  <img src="assets/scores.png" alt="F4 score of each protein complex using different training set sizes">
+</p>
 
 
 
