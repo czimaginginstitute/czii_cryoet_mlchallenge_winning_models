@@ -43,13 +43,15 @@ def get_args():
     parser.add_argument("-c", "--copick_config", help="copick config file path")
     parser.add_argument("-tts", "--train_run_names", type=str, default="", help="Tomogram dataset run names for training")
     parser.add_argument("-vts", "--val_run_names", type=str, default="", help="Tomogram dataset run names for validation")
+    parser.add_argument("-rt", "--reconstruction_type", type=str, default="denoised", help="Tomogram reconstruction type. Default is denoised.")
+    parser.add_argument("-u", "--user_id", type=str, default="curation", help="Needed for training, the user_id used for the ground truth picks.")
     parser.add_argument("-bs", "--batch_size", type=int, default=8, help="batch size for data loader")
     parser.add_argument("-n", "--n_aug", type=int, default=1112, help="Data augmentation copy. Default is 1112.")
     parser.add_argument("-l", "--learning_rate", type=float, default=1e-4, help="Learning rate for optimizer")
     parser.add_argument("-d", "--debug", action='store_true', help="debugging True/ False")
     parser.add_argument("-p", "--pretrained_weight", type=str, default="", help="One pretrained weights file path. Default is None.")
     parser.add_argument("-e", "--epochs", type=int, default=100, help="Number of epochs. Default is 100.")
-    parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
+    parser.add_argument("--pixelsize", type=float, default=10.0, help="Pixelsize. Default is 10.0A.")
     parser.add_argument("--distributed", type=bool, default=False, help="Distributed training, default is False.")
     parser.add_argument("-i", "--data_folder", type=str, default="./data", help="data folder for training")
     parser.add_argument("-t", "--train_df", type=str, default="train_folded_v1.csv", help="dataframe file containing label localizations")
@@ -64,6 +66,8 @@ class DataModule(pl.LightningDataModule):
             copick_root = None,
             train_run_names = None,
             val_run_names = None,
+            recon_type = 'denoised',
+            user_id = 'curation',
             pixelsize = 10.012,
             batch_size: int = 1,
             n_aug: int = 1112,
@@ -73,6 +77,8 @@ class DataModule(pl.LightningDataModule):
         self.copick_root = copick_root
         self.train_run_names = train_run_names
         self.val_run_names = val_run_names
+        self.recon_type = recon_type
+        self.user_id = user_id
         self.pixelsize = pixelsize
         self.n_aug = n_aug
 
@@ -82,6 +88,8 @@ class DataModule(pl.LightningDataModule):
             transforms = train_aug,
             run_names = self.train_run_names, 
             pixelsize =  self.pixelsize,
+            recon_type = self.recon_type,
+            user_id = self.user_id,
             n_aug=self.n_aug,
             crop_radius = 2
         )
@@ -89,6 +97,8 @@ class DataModule(pl.LightningDataModule):
         self.val_dataset = CopickDataset(
             copick_root = self.copick_root,
             run_names = self.val_run_names,
+            recon_type = self.recon_type,
+            user_id = self.user_id,
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
             pixelsize = self.pixelsize
         )
@@ -142,6 +152,8 @@ if __name__ == "__main__":
                              val_run_names=args.val_run_names.split(','), 
                              batch_size=args.batch_size, 
                              pixelsize=args.pixelsize,
+                             recon_type=args.reconstruction_type,
+                             user_id = args.user_id,
                              n_aug=args.n_aug
                              )
     output_dir = Path(f'{args.output_dir}/jobs/{args.job_id}')
@@ -149,20 +161,21 @@ if __name__ == "__main__":
     print(f'making output dir {str(output_dir)}')
 
     
+    num_classes = len(copick_root.pickable_objects)
     if args.pretrained_weight:
         model = SegNet.load_from_checkpoint(args.pretrained_weight)
     else:
         backbone_args = dict(
             spatial_dims=3,    
             in_channels=1,
-            out_channels=6,
+            out_channels=len(copick_root.pickable_objects),
             backbone='resnet34',
             pretrained=False
         )
 
         model = SegNet(        
             nclasses = len(copick_root.pickable_objects),
-            class_weights = np.array([256,256,256,256,256,256,1]),   # the background class is suppressed
+            class_weights = np.array([256 for i in range(len(copick_root.pickable_objects))] + [1]),   # the background class is suppressed
             backbone_args = backbone_args,
             lvl_weights = np.array([0, 0, 1, 1]),
             output_dir = f'{args.output_dir}/jobs/{args.job_id}'

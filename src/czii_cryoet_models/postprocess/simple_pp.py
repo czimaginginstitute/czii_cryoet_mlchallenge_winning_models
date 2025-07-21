@@ -69,7 +69,7 @@ def postprocess_pipeline_val(pred, metas):
                 'radius': radius
             }
         for pick in run.picks:
-            if pick.user_id == "curation":
+            if pick.user_id == meta['user_id']:
                 points = pick.points
                 for p in points:
                     object_name = pick.pickable_object_name
@@ -127,7 +127,7 @@ def get_gt(metas):
                 'radius': radius
             }
         for pick in run.picks:
-            if pick.user_id == "curation":
+            if pick.user_id == meta['user_id']:
                 points = pick.points
                 for p in points:
                     object_name = pick.pickable_object_name

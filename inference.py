@@ -20,7 +20,9 @@ def get_args():
     parser.add_argument("-bs", "--batch_size", type=int, default=1, help="batch size for data loader")
     parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file paths (use comma for multiple paths). Default is None.")
     parser.add_argument("-pa", "--pattern", type=str, default="*.ckpt", help="The key for pattern matching checkpoints. Default is *.ckpt")
-    parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
+    parser.add_argument("--pixelsize", type=float, default=10.0, help="Pixelsize. Default is 10.0A.")
+    parser.add_argument("-rt", "--reconstruction_type", type=str, default="denoised", help="Tomogram reconstruction type. Default is denoised.")
+    parser.add_argument("-u", "--user_id", type=str, default="curation", help="Needed for training, the user_id used for the ground truth picks.")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving prediction results (csv).")
     parser.add_argument("-g", "--gpus", type=int, default=1, help="Number of GPUs for inference. Default is 1.")
     return parser.parse_args()
@@ -53,6 +55,8 @@ class DataModule(pl.LightningDataModule):
             copick_root = None,
             run_names = None,
             pixelsize = 10.012,
+            recon_type = 'denoised',
+            user_id = 'curation',
             batch_size: int = 1,
         ):
         super().__init__()
@@ -60,13 +64,17 @@ class DataModule(pl.LightningDataModule):
         self.copick_root = copick_root
         self.run_names = run_names
         self.pixelsize = pixelsize
+        self.recon_type= recon_type
+        self.user_id = user_id
 
     def setup(self, stage=None):    # stage='train' only gets called for training
         self.predict_dataset = CopickDataset(
             copick_root = self.copick_root,
             run_names = self.run_names,
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
-            pixelsize = self.pixelsize
+            pixelsize = self.pixelsize,
+            recon_type = self.recon_type,
+            user_id = self.user_id
         )
 
     def predict_dataloader(self):

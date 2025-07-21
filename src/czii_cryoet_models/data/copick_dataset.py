@@ -88,8 +88,10 @@ class TrainDataset(Dataset):
     def __init__(
             self, 
             copick_root=None,
-            run_names: list = [],
-            pixelsize: float = 10.012, 
+            run_names: list=[],
+            pixelsize: float=10.012,
+            recon_type: str='denoised',
+            user_id: str='curation', 
             transforms=None,
             n_aug=1112,
             crop_radius=5, # in pixels; TODO if None, use points only; if < 1.0, create masks using a ratio of the radius; if > 1.0, create masks using the radius.
@@ -99,6 +101,8 @@ class TrainDataset(Dataset):
         self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
         self.class2radius = {p.name:p.radius for p in self.root.pickable_objects}
         self.pixelsize = pixelsize
+        self.recon_trype = recon_type
+        self.user_id = user_id
         self.transforms = transforms
         self.n_aug = n_aug
         self.len = len(run_names) * n_aug
@@ -113,12 +117,12 @@ class TrainDataset(Dataset):
 
         # Lazy load tomogram
         run = self.root.get_run(run_name)
-        tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0)  # (W, H, D)
+        tomogram = run.get_voxel_spacing(self.pixelsize).get_tomogram(self.recon_trype).numpy().transpose(2,1,0)  # (W, H, D)
 
         locations = []
         classes = []
         for pick in run.picks:
-            if pick.user_id == "curation":
+            if pick.user_id == self.user_id:
                 for point in pick.points:
                     locations.append([point.location.x, point.location.y, point.location.z])
                     classes.append(self.class2id[pick.pickable_object_name])
@@ -202,8 +206,10 @@ class CopickDataset(Dataset):
     def __init__(
             self, 
             copick_root=None,
-            run_names: list = [],     
-            pixelsize: float = 10.012,
+            run_names: list=[],     
+            pixelsize: float=10.012,
+            recon_type: str='denoised',
+            user_id: str='curation',
             transforms=None, 
         ):
 
@@ -211,6 +217,8 @@ class CopickDataset(Dataset):
         self.run_names = run_names
         self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)} 
         self.pixelsize = pixelsize
+        self.recon_type = recon_type
+        self.user_id = user_id
         self.transforms = transforms
         self.pickable_objects = {obj.name: obj.radius for obj in self.root.pickable_objects}
     
@@ -220,11 +228,12 @@ class CopickDataset(Dataset):
     def __getitem__(self, idx):
         run_name = self.run_names[idx]
         run = self.root.get_run(run_name)
-        tomogram = run.get_voxel_spacing(10).get_tomogram('denoised').numpy().transpose(2,1,0) # (W, H, D)
+        tomogram = run.get_voxel_spacing(self.pixelsize).get_tomogram(self.recon_type).numpy().transpose(2,1,0) # (W, H, D)
         meta = {'run': run, 
                 'pixelsize': self.pixelsize, 
                 'pickable_objects': self.pickable_objects, 
-                'dim': tomogram.shape
+                'dim': tomogram.shape,
+                'user_id': self.user_id
         }
         data = {'meta': meta, 'input': tomogram, 'dataset_type': 'copick'}
         if self.transforms:
