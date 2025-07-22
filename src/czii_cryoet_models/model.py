@@ -37,13 +37,12 @@ class SegNet(pl.LightningModule):
         output_dir: str = './output/jobs/job_0/',
         ema_decay: float = 0.999,
         ema_start_epoch: int = 5,
+        particle_ids: dict={},
         particle_radius: dict={},
         particle_weights: dict={},
         score_thresholds: dict={},
     ):
         super().__init__()
-        self.save_hyperparameters()  # The parameters will be saved into the checkpoints.
-
         self.n_classes = nclasses + 1  # add the background channel
         self.model = FlexibleUNet(**backbone_args)
         self.ema = ModelEMA(self.model, decay=ema_decay)
@@ -56,9 +55,13 @@ class SegNet(pl.LightningModule):
         self.learning_rate = learning_rate
         self.output_dir = Path(output_dir)
         
-        self.score_thresholds = copy.deepcopy(score_thresholds)
+        self.particle_ids     = copy.deepcopy(particle_ids)
         self.particle_radius  = copy.deepcopy(particle_radius)
+        self.score_thresholds = copy.deepcopy(score_thresholds)
         self.particle_weights = copy.deepcopy(particle_weights)
+        
+        #self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
+        self.save_hyperparameters()  # The parameters will be saved into the checkpoints.
         
         self.gt_dfs = []
         self.submission_dfs = []
@@ -71,6 +74,24 @@ class SegNet(pl.LightningModule):
         self.best_val_scores = {'score': 0.0}
         self.best_score_thresholds = dict()
 
+    
+    @property
+    def description(self) -> str:
+        desc_dict = {}
+        for (k1, v1), (k2, v2), (k3, v3), (k4, v4) in zip(
+            self.particle_ids.items(),
+            self.particle_radius.items(),
+            self.score_thresholds.items(),
+            self.particle_weights.items()
+        ):
+            desc_dict.setdefault(k1, {})['channel_id'] = v1
+            desc_dict.setdefault(k2, {})['radius'] = v2
+            desc_dict.setdefault(k3, {})['score_threshold'] = v3
+            desc_dict.setdefault(k4, {})['score_weight'] = v4
+        
+        desc_str = f"SegNet model predicting {self.n_classes-1} classes\n" 
+        return f"{desc_str}\nClass details:\n{json.dumps(desc_dict, indent=2)}"
+    
     
     @classmethod
     def load_flexible_checkpoints(cls, checkpoint_path, pattern='*.ckpt', **kwargs):

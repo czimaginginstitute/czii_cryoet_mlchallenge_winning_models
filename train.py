@@ -177,6 +177,7 @@ if __name__ == "__main__":
             class_weights = np.array([256 for i in range(len(copick_root.pickable_objects))] + [1]),   # the background class is suppressed
             backbone_args = backbone_args,
             lvl_weights = np.array([0, 0, 1, 1]),
+            particle_ids = {p.name:i for i,p in enumerate(copick_root.pickable_objects)},
             particle_radius = {p.name:p.radius for p in copick_root.pickable_objects},
             particle_weights = {p.name:p.metadata['score_weight'] for p in copick_root.pickable_objects},
             score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_root.pickable_objects},

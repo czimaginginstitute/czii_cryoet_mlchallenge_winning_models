@@ -1,5 +1,5 @@
 # CZII_ML_Challenge_Winning_Models
-The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main) in pytorch-lightning and copick..
+The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main) in pytorch-lightning and copick.
 
 
 ## Benchmark
@@ -123,7 +123,7 @@ python train.py \
     --epochs 100   
 ```
 
-## Re-training from a checkpoint
+## Re-training from a checkpoint for the same dataset
 ```
 python train.py \
     --copick_config COPICK_CONFIG_FILE \
@@ -135,6 +135,55 @@ python train.py \
     --job_id job_1 \
     --epochs 100 \
     --pretrained_weight CHECKPOINT_PATH   
+```
+
+## Subset transfer learning: re-training from a checkpoint for a different dataset 
+The conept of subset transfer learning is to load a checkpoint from a pretrained model and fintune based on a new dataset that may contain only a subset of classes. In this case, we need to know the classes the checkpoint was trained on. This information can be found by loading the checkpoint and print out the `model.description` attribute.
+```
+>>> from czii_cryoet_models.model import SegNet
+>>> model = SegNet.load_from_checkpoint('/hpc/projects/group.czii/kevin.zhao/ml_challenge/winning_models/czii_cryoet_mlchallenge_models/output_test/checkpoints/best_model-v6.ckpt')
+>>> print(model.description)
+SegNet model predicting 6 classes
+
+Class details:
+{
+  "apo-ferritin": {
+    "channel_id": 0,
+    "radius": 60.0,
+    "score_threshold": 0.16,
+    "score_weight": 1
+  },
+  "beta-amylase": {
+    "channel_id": 1,
+    "radius": 65.0,
+    "score_threshold": 0.25,
+    "score_weight": 0
+  },
+  "beta-galactosidase": {
+    "channel_id": 2,
+    "radius": 90.0,
+    "score_threshold": 0.13,
+    "score_weight": 2
+  },
+  "ribosome": {
+    "channel_id": 3,
+    "radius": 150.0,
+    "score_threshold": 0.19,
+    "score_weight": 1
+  },
+  "thyroglobulin": {
+    "channel_id": 4,
+    "radius": 130.0,
+    "score_threshold": 0.18,
+    "score_weight": 2
+  },
+  "virus-like-particle": {
+    "channel_id": 5,
+    "radius": 135.0,
+    "score_threshold": 0.5,
+    "score_weight": 1
+  }
+}
 ```
 
 
