@@ -99,7 +99,6 @@ class TrainDataset(Dataset):
         self.run_names = run_names   # list of metadata dicts (only run_names etc.)
         self.root = copick_root
         self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
-        self.class2radius = {p.name:p.radius for p in self.root.pickable_objects}
         self.pixelsize = pixelsize
         self.recon_trype = recon_type
         self.user_id = user_id
