@@ -48,6 +48,8 @@ def score(
         row_id_column_name: str,
         distance_multiplier: float,
         beta: int,
+        particle_radius: dict={},
+        particle_weights: dict={},
         weighted=True,
 ) -> float:
     '''
@@ -59,25 +61,6 @@ def score(
       - f_beta is calculated for each particle type
       - individual f_beta scores are weighted by particle type for final score
     '''
-
-    particle_radius = {
-        'apo-ferritin': 60,
-        'beta-amylase': 65,
-        'beta-galactosidase': 90,
-        'ribosome': 150,
-        'thyroglobulin': 130,
-        'virus-like-particle': 135,
-    }
-
-    weights = {
-        'apo-ferritin': 1,
-        'beta-amylase': 0,
-        'beta-galactosidase': 2,
-        'ribosome': 1,
-        'thyroglobulin': 2,
-        'virus-like-particle': 1,
-    }
-
     particle_radius = {k: v * distance_multiplier for k, v in particle_radius.items()}
 
     # Filter submission to only contain experiments found in the solution split
@@ -85,7 +68,7 @@ def score(
     submission = submission.loc[submission['experiment'].isin(split_experiments)]
 
     # Only allow known particle types
-    if not set(submission['particle_type'].unique()).issubset(set(weights.keys())):
+    if not set(submission['particle_type'].unique()).issubset(set(particle_weights.keys())):
         raise ParticipantVisibleError('Unrecognized `particle_type`.')
 
     dupes = solution.duplicated(subset=['experiment', 'x', 'y', 'z'], keep=False)
@@ -94,7 +77,7 @@ def score(
 
     # Now ensure no duplicates remain
     assert solution.duplicated(subset=['experiment', 'x', 'y', 'z']).sum() == 0
-    assert particle_radius.keys() == weights.keys()
+    assert particle_radius.keys() == particle_weights.keys()
     
     results = {}
     for particle_type in particle_radius.keys():
@@ -140,7 +123,7 @@ def score(
         recall = tp / (tp + fn) if tp + fn > 0 else 0
         fbeta = (1 + beta**2) * (precision * recall) / (beta**2 * precision + recall) if (precision + recall) > 0 else 0.0
         fbetas += [fbeta]
-        fbeta_weights += [weights.get(particle_type, 1.0)]
+        fbeta_weights += [particle_weights.get(particle_type, 1.0)]
         particle_types += [particle_type]
         
     if weighted:
@@ -196,7 +179,9 @@ def process_run(reference_picks, candidate_picks, pickable_objects, distance_mul
 def calc_metric(
         pred_df: pd.DataFrame, 
         gt_df: pd.DataFrame, 
-        score_thresholds: dict={}, 
+        score_thresholds: dict={},
+        particle_radius: dict={},
+        particle_weights: dict={},
         output_dir: str='./output/jobs/job_0') -> dict:
     
     solution = gt_df.copy()
@@ -218,7 +203,10 @@ def calc_metric(
                             sub0a[sub0a['conf']>c].copy(),
                             row_id_column_name = 'id',
                             distance_multiplier=0.5,
-                            beta=4,weighted = False)[0]]
+                            beta=4,
+                            particle_radius=particle_radius,
+                            particle_weights = particle_weights,
+                            weighted = False)[0]]
             best_th = ths[np.argmax(scores)]
             best_ths[p] = best_th
     
@@ -229,7 +217,10 @@ def calc_metric(
         submission_pp.copy(),
         row_id_column_name = 'id',
         distance_multiplier=0.5,
-        beta=4)
+        beta=4,
+        particle_radius=particle_radius,
+        particle_weights = particle_weights,
+        )
     
     #print(f'particle_scores: {particle_scores}')
     result = {'score_' + k: v for k,v in particle_scores.items()}

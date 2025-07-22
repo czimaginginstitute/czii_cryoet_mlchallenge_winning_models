@@ -160,8 +160,7 @@ if __name__ == "__main__":
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f'making output dir {str(output_dir)}')
 
-    
-    num_classes = len(copick_root.pickable_objects)
+
     if args.pretrained_weight:
         model = SegNet.load_from_checkpoint(args.pretrained_weight)
     else:
@@ -178,6 +177,9 @@ if __name__ == "__main__":
             class_weights = np.array([256 for i in range(len(copick_root.pickable_objects))] + [1]),   # the background class is suppressed
             backbone_args = backbone_args,
             lvl_weights = np.array([0, 0, 1, 1]),
+            particle_radius = {p.name:p.radius for p in copick_root.pickable_objects},
+            particle_weights = {p.name:p.metadata['score_weight'] for p in copick_root.pickable_objects},
+            score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_root.pickable_objects},
             output_dir = f'{args.output_dir}/jobs/{args.job_id}'
         )
 

@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
 import json
+import copy
 import pandas as pd
 from pathlib import Path
 from czii_cryoet_models.modules.unet import FlexibleUNet
@@ -36,6 +37,9 @@ class SegNet(pl.LightningModule):
         output_dir: str = './output/jobs/job_0/',
         ema_decay: float = 0.999,
         ema_start_epoch: int = 5,
+        particle_radius: dict={},
+        particle_weights: dict={},
+        score_thresholds: dict={},
     ):
         super().__init__()
         self.save_hyperparameters()  # The parameters will be saved into the checkpoints.
@@ -52,13 +56,9 @@ class SegNet(pl.LightningModule):
         self.learning_rate = learning_rate
         self.output_dir = Path(output_dir)
         
-        self.score_thresholds=dict()
-        self.score_thresholds["apo-ferritin"]=-1 #0.16 
-        self.score_thresholds["beta-amylase"]=-1 #0.25 
-        self.score_thresholds["beta-galactosidase"]=-1 #0.13
-        self.score_thresholds["ribosome"]=-1 #0.19 
-        self.score_thresholds["thyroglobulin"]=-1 #0.18
-        self.score_thresholds["virus-like-particle"]=-1 #0.5
+        self.score_thresholds = copy.deepcopy(score_thresholds)
+        self.particle_radius  = copy.deepcopy(particle_radius)
+        self.particle_weights = copy.deepcopy(particle_weights)
         
         self.gt_dfs = []
         self.submission_dfs = []
@@ -194,6 +194,8 @@ class SegNet(pl.LightningModule):
                 submission_df, 
                 gt_df,
                 score_thresholds=self.score_thresholds,
+                particle_radius = self.particle_radius,
+                particle_weights = self.particle_weights
             )
             self.log("val_score", scores['score'], on_epoch=True, prog_bar=True)
             self.val_scores.append(scores)
@@ -230,6 +232,8 @@ class SegNet(pl.LightningModule):
                     submission_df,
                     gt_df,
                     score_thresholds=self.score_thresholds,
+                    particle_radius = self.particle_radius,
+                    particle_weights = self.particle_weights,
                     output_dir=self.output_dir 
                 )
 
