@@ -155,13 +155,6 @@ if __name__ == "__main__":
     
     val_df['id'] = range(len(val_df))
     
-    score_thresholds = {"apo-ferritin": 0.16, 
-                        "beta-amylase": 0.25, 
-                        "beta-galactosidase": 0.13, 
-                        "ribosome": 0.19, 
-                        "thyroglobulin": 0.18, 
-                        "virus-like-particle": 0.5
-    }
     start = time.time()
     sc = score(
         val_df.copy(),
