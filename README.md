@@ -16,6 +16,98 @@ cd into the root folder, then
 pip install -e .
 ```
 
+## Copick Configuration File
+The copick data ingestion can automatically populate many important internal variables from the config file. Especially, the metrics for the evaluation process, such as `score_threshold` and `score_weight` are stored under the metadata key in the configuration file. An example of copick config file is shown below:
+```
+{
+    "name": "Phatom Dataset",
+    "description": "CZII ML Challenge Training dataset",
+    "version": "1.0.1",
+    "pickable_objects": [
+        {
+            "name": "apo-ferritin",
+            "is_particle": true,
+            "pdb_id": "4V1W",
+            "label": 1,
+            "color": [  0, 117, 220, 255],
+            "radius": 60,
+            "map_threshold": 0.0418,
+            "metadata": {
+                "score_weight": 1,
+                "score_threshold": 0.16
+            }
+        },
+        {
+            "name": "beta-amylase",
+            "is_particle": true,
+            "pdb_id": "1FA2",
+            "label": 2,
+            "color": [153,  63,   0, 255],
+            "radius": 65,
+            "map_threshold": 0.035,
+            "metadata": {
+                "score_weight": 0,
+                "score_threshold": 0.25
+            }
+        },
+        {
+            "name": "beta-galactosidase",
+            "is_particle": true,
+            "pdb_id": "6X1Q",
+            "label": 3,
+            "color": [ 76,   0,  92, 255],
+            "radius": 90,
+            "map_threshold": 0.0578,
+            "metadata": {
+                "score_weight": 2,
+                "score_threshold": 0.13
+            }
+        },
+        {
+            "name": "ribosome",
+            "is_particle": true,
+            "pdb_id": "6EK0",
+            "label": 4,
+            "color": [  0,  92,  49, 255],
+            "radius": 150,
+            "map_threshold": 0.0374,
+            "metadata": {
+                "score_weight": 1,
+                "score_threshold": 0.19
+            }
+        },
+        {
+            "name": "thyroglobulin",
+            "is_particle": true,
+            "pdb_id": "6SCJ",
+            "label": 5,
+            "color": [ 43, 206,  72, 255],
+            "radius": 130,
+            "map_threshold": 0.0278,
+            "metadata": {
+                "score_weight": 2,
+                "score_threshold": 0.18
+            }
+        },
+        {
+            "name": "virus-like-particle",
+            "is_particle": true,
+            "label": 6,
+            "color": [255, 204, 153, 255],
+            "radius": 135,
+            "map_threshold": 0.201,
+            "metadata": {
+                "score_weight": 1,
+                "score_threshold": 0.5
+            }
+        }
+    ],
+    "config_type": "czii cryoet mlchallenge dataset",
+    "overlay_root": "local:///PATH/TO/EXTRACTED/PROJECT/",
+    "static_root": "local:///PATH/TO/EXTRACTED/PROJECT/"
+}
+```
+
 
 ## Training from scratch
 The code support loading data via copick and directly loading zarr data. An example training command is below.
