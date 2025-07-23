@@ -102,7 +102,7 @@ class SegNet(pl.LightningModule):
             desc_dict.setdefault(k4, {})['score_weight'] = v4
         
         desc_str = f"SegNet model predicting {self.n_classes-1} classes\n" 
-        return f"{desc_str}\nClass details:\n{json.dumps(desc_dict, indent=2)}"
+        return f"{desc_str}\nPrediction details:\n{json.dumps(desc_dict, indent=2)}"
     
     
     @classmethod
