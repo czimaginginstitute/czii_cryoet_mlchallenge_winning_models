@@ -141,11 +141,7 @@ class DataModule(pl.LightningDataModule):
 
 if __name__ == "__main__":
     args = get_args()
-    # ANGSTROMS_IN_PIXEL = args.pixelsize
     copick_root = CopickRootFSSpec.from_file(args.copick_config)
-    # CLASS_INDEX_TO_CLASS_NAME = {p.label: p.name for p in copick_root.pickable_objects}
-    # TARGET_SIGMAS = [p.radius / ANGSTROMS_IN_PIXEL for p in copick_root.pickable_objects]
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
     data_module = DataModule(copick_root=copick_root, 
                              train_run_names=args.train_run_names.split(','), 

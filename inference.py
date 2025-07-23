@@ -114,41 +114,4 @@ if __name__ == "__main__":
 
     # Initialize trainer
     trainer = pl.Trainer(devices=1, accelerator="gpu") if args.gpus == 1 else pl.Trainer(devices=args.gpus, accelerator="gpu", strategy="ddp")
-
-    # Run prediction
     predictions = trainer.predict(ensemble_model, datamodule=data_module)
-
-
-
-
-# # Paths to multiple checkpoints
-# checkpoint_paths = [
-#     "checkpoints/model1.ckpt",
-#     "checkpoints/model2.ckpt",
-#     "checkpoints/model3.ckpt"
-# ]
-
-# # Create inference dataset + dataloader
-# inference_dataset = MyInferenceDataset(...)
-# inference_loader = DataLoader(inference_dataset, batch_size=4, shuffle=False)
-
-# # For storing all model predictions
-# all_model_preds = []
-
-# # Predict with each model
-# for ckpt in checkpoint_paths:
-#     print(f"Predicting with checkpoint: {ckpt}")
-#     model = LitModel.load_from_checkpoint(ckpt)
-
-#     trainer = Trainer(devices=1, accelerator="gpu", logger=False)
-#     preds = trainer.predict(model, dataloaders=inference_loader)
-
-#     # preds is a list of tensors → stack into one tensor (B, ...)
-#     stacked = torch.cat(preds, dim=0)
-#     all_model_preds.append(stacked)
-
-# # Average predictions across models
-# ensemble_preds = torch.stack(all_model_preds).mean(dim=0)  # shape: (B, ...)
-
-# # Save if needed
-# torch.save(ensemble_preds, "ensemble_predictions.pt")
