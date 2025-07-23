@@ -128,6 +128,9 @@ python train.py \
     --copick_config COPICK_CONFIG_FILE \
     --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
     --val_run_names TS_5_4 \
+    --reconstruction_type denoised \
+    --user_id COPICK_USER_ID \
+    --pixelsize 10 \  
     --batch_size 16 \
     --n_aug 1112 \
     --output_dir OUTPUT_PATH \
@@ -141,6 +144,9 @@ python train.py \
     --copick_config COPICK_CONFIG_FILE \
     --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
     --val_run_names TS_5_4  \
+    --reconstruction_type denoised \
+    --user_id COPICK_USER_ID \
+    --pixelsize 10 \  
     --batch_size 16 \
     --n_aug 1112 \
     --output_dir OUTPUT_PATH \
