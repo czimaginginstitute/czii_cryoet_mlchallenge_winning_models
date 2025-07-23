@@ -28,7 +28,7 @@ class SegNet(pl.LightningModule):
     def __init__(
         self,
         nclasses: int,
-        class_weights: np.ndarray,
+        class_loss_weights: dict,
         backbone_args: dict,
         lvl_weights: np.ndarray,
         mixup_beta: float = 1.0,
@@ -37,42 +37,54 @@ class SegNet(pl.LightningModule):
         output_dir: str = './output/jobs/job_0/',
         ema_decay: float = 0.999,
         ema_start_epoch: int = 5,
-        particle_ids: dict={},
-        particle_radius: dict={},
-        particle_weights: dict={},
-        score_thresholds: dict={},
+        particle_ids: dict = {},
+        particle_radius: dict = {},
+        particle_weights: dict = {},
+        score_thresholds: dict = {},
     ):
         super().__init__()
-        self.n_classes = nclasses + 1  # add the background channel
+
+        # Model setup
+        self.n_classes = nclasses + 1  # +1 for background
         self.model = FlexibleUNet(**backbone_args)
         self.ema = ModelEMA(self.model, decay=ema_decay)
         self.ema_start_epoch = ema_start_epoch
-        self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
-        self.lvl_weights = torch.tensor(lvl_weights, dtype=torch.float32)
-        self.loss_fn = DenseCrossEntropy(class_weights=self.class_weights)
-        self.mixup = Mixup(mixup_beta)
-        self.mixup_p = mixup_p
         self.learning_rate = learning_rate
         self.output_dir = Path(output_dir)
-        
-        self.particle_ids     = copy.deepcopy(particle_ids)
-        self.particle_radius  = copy.deepcopy(particle_radius)
-        self.score_thresholds = copy.deepcopy(score_thresholds)
-        self.particle_weights = copy.deepcopy(particle_weights)
-        
-        #self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
-        self.save_hyperparameters()  # The parameters will be saved into the checkpoints.
-        
-        self.gt_dfs = []
-        self.submission_dfs = []
 
+        # Class weights setup
+        weights = [0.0] * nclasses  # suppress missing classes
+        for particle_name, weight in class_loss_weights.items():
+            if particle_name in particle_ids:
+                weights[particle_ids[particle_name]] = weight
+        weights.append(1.0)  # background class
+        self.class_loss_weights = torch.tensor(weights, dtype=torch.float32)
+
+        # Loss and training utilities
+        self.lvl_weights = torch.tensor(lvl_weights, dtype=torch.float32)
+        self.loss_fn = DenseCrossEntropy(class_loss_weights=self.class_loss_weights)
+        self.mixup = Mixup(mixup_beta)
+        self.mixup_p = mixup_p
+
+        # Particle metadata
+        self.particle_ids = copy.deepcopy(particle_ids)
+        self.particle_radius = copy.deepcopy(particle_radius)
+        self.particle_weights = copy.deepcopy(particle_weights)
+        self.score_thresholds = copy.deepcopy(score_thresholds)
+
+        # Metrics tracking
         self.avg_train_losses = []
         self.train_losses = []
         self.avg_val_losses = []
         self.val_losses = []
+        self.gt_dfs = []
+        self.submission_dfs = []
         self.val_scores = []
         self.best_val_scores = {'score': 0.0}
-        self.best_score_thresholds = dict()
+        self.best_score_thresholds = {}
+
+        # Save all arguments as hyperparameters
+        self.save_hyperparameters()
 
     
     @property

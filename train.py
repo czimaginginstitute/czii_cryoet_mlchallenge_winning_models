@@ -171,10 +171,9 @@ if __name__ == "__main__":
             backbone='resnet34',
             pretrained=False
         )
-
         model = SegNet(        
             nclasses = len(copick_root.pickable_objects),
-            class_weights = np.array([256 for i in range(len(copick_root.pickable_objects))] + [1]),   # the background class is suppressed
+            class_loss_weights = {p.name:p.metadata['class_loss_weight'] for p in copick_root.pickable_objects},
             backbone_args = backbone_args,
             lvl_weights = np.array([0, 0, 1, 1]),
             particle_ids = {p.name:i for i,p in enumerate(copick_root.pickable_objects)},

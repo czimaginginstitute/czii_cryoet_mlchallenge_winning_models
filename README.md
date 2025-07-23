@@ -17,7 +17,13 @@ pip install -e .
 ```
 
 ## Copick configuration file
-The copick data ingestion can automatically populate many important internal variables from the config file. Especially, the metrics for the evaluation process, such as `score_threshold` and `score_weight` are stored under the metadata key in the configuration file. An example of copick config file is shown below:
+The copick data ingestion can automatically populate many important internal variables from the config file. Especially, the metrics for the training and evaluation process, such as `class_loss_weight`, `score_threshold`, and `score_weight` are stored under the metadata key in the configuration file. 
+
+- `class_loss_weight`: weighting each class in the DenseCrossEntrope loss
+- `score_threshold`: white filter picks per class above the value from the final probability--reduce false positives 
+- `score_weight`: weighting each class in the F beta score 
+
+An example of copick config file is shown below:
 ```
 {
     "name": "Phatom Dataset",
@@ -34,7 +40,8 @@ The copick data ingestion can automatically populate many important internal var
             "map_threshold": 0.0418,
             "metadata": {
                 "score_weight": 1,
-                "score_threshold": 0.16
+                "score_threshold": 0.16,
+                "class_loss_weight": 256
             }
         },
         {
@@ -47,7 +54,8 @@ The copick data ingestion can automatically populate many important internal var
             "map_threshold": 0.035,
             "metadata": {
                 "score_weight": 0,
-                "score_threshold": 0.25
+                "score_threshold": 0.25,
+                "class_loss_weight": 256
             }
         },
         {
@@ -60,7 +68,8 @@ The copick data ingestion can automatically populate many important internal var
             "map_threshold": 0.0578,
             "metadata": {
                 "score_weight": 2,
-                "score_threshold": 0.13
+                "score_threshold": 0.13,
+                "class_loss_weight": 256
             }
         },
         {
@@ -73,7 +82,8 @@ The copick data ingestion can automatically populate many important internal var
             "map_threshold": 0.0374,
             "metadata": {
                 "score_weight": 1,
-                "score_threshold": 0.19
+                "score_threshold": 0.19,
+                "class_loss_weight": 256
             }
         },
         {
@@ -86,7 +96,8 @@ The copick data ingestion can automatically populate many important internal var
             "map_threshold": 0.0278,
             "metadata": {
                 "score_weight": 2,
-                "score_threshold": 0.18
+                "score_threshold": 0.18,
+                "class_loss_weight": 256
             }
         },
         {
@@ -98,7 +109,8 @@ The copick data ingestion can automatically populate many important internal var
             "map_threshold": 0.201,
             "metadata": {
                 "score_weight": 1,
-                "score_threshold": 0.5
+                "score_threshold": 0.5,
+                "class_loss_weight": 256
             }
         }
     ],
