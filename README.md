@@ -150,7 +150,8 @@ python train.py \
 ```
 
 ## Subset transfer learning: re-training from a checkpoint for a different dataset 
-The conept of subset transfer learning is to load a checkpoint from a pretrained model and fintune based on a new dataset that may contain only a subset of classes. In this case, we need to know the classes the checkpoint was trained on. This information can be found by loading the checkpoint and print out the `model.description` attribute.
+**Subset transfer learning** involves loading a checkpoint from a pretrained model and fine-tuning it on a new dataset that includes only a subset of the original classes. To do this correctly, it’s important to know which classes the original model was trained on. This information can be accessed by loading the checkpoint and inspecting the `model.description` attribute. The `copick_config` used for fine-tuning should include the same pickable objects as the original training setup, with updated class weights and thresholds as needed for the new task.
+
 ```
 >>> from czii_cryoet_models.model import SegNet
 >>> model = SegNet.load_from_checkpoint('/hpc/projects/group.czii/kevin.zhao/ml_challenge/winning_models/czii_cryoet_mlchallenge_models/output_test/checkpoints/best_model-v6.ckpt')
