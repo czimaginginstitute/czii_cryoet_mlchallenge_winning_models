@@ -9,6 +9,7 @@ import pandas as pd
 #from scipy.spatial import cKDTree
 from scipy.spatial import KDTree
 from tqdm import tqdm
+from czii_cryoet_models.postprocess.utils import get_final_submission
 
 
 class ParticipantVisibleError(Exception):
@@ -47,6 +48,8 @@ def score(
         row_id_column_name: str,
         distance_multiplier: float,
         beta: int,
+        particle_radius: dict={},
+        particle_weights: dict={},
         weighted=True,
 ) -> float:
     '''
@@ -58,25 +61,6 @@ def score(
       - f_beta is calculated for each particle type
       - individual f_beta scores are weighted by particle type for final score
     '''
-
-    particle_radius = {
-        'apo-ferritin': 60,
-        'beta-amylase': 65,
-        'beta-galactosidase': 90,
-        'ribosome': 150,
-        'thyroglobulin': 130,
-        'virus-like-particle': 135,
-    }
-
-    weights = {
-        'apo-ferritin': 1,
-        'beta-amylase': 0,
-        'beta-galactosidase': 2,
-        'ribosome': 1,
-        'thyroglobulin': 2,
-        'virus-like-particle': 1,
-    }
-
     particle_radius = {k: v * distance_multiplier for k, v in particle_radius.items()}
 
     # Filter submission to only contain experiments found in the solution split
@@ -84,7 +68,7 @@ def score(
     submission = submission.loc[submission['experiment'].isin(split_experiments)]
 
     # Only allow known particle types
-    if not set(submission['particle_type'].unique()).issubset(set(weights.keys())):
+    if not set(submission['particle_type'].unique()).issubset(set(particle_weights.keys())):
         raise ParticipantVisibleError('Unrecognized `particle_type`.')
 
     dupes = solution.duplicated(subset=['experiment', 'x', 'y', 'z'], keep=False)
@@ -93,7 +77,7 @@ def score(
 
     # Now ensure no duplicates remain
     assert solution.duplicated(subset=['experiment', 'x', 'y', 'z']).sum() == 0
-    assert particle_radius.keys() == weights.keys()
+    assert particle_radius.keys() == particle_weights.keys()
     
     results = {}
     for particle_type in particle_radius.keys():
@@ -139,7 +123,7 @@ def score(
         recall = tp / (tp + fn) if tp + fn > 0 else 0
         fbeta = (1 + beta**2) * (precision * recall) / (beta**2 * precision + recall) if (precision + recall) > 0 else 0.0
         fbetas += [fbeta]
-        fbeta_weights += [weights.get(particle_type, 1.0)]
+        fbeta_weights += [particle_weights.get(particle_type, 1.0)]
         particle_types += [particle_type]
         
     if weighted:
@@ -192,56 +176,55 @@ def process_run(reference_picks, candidate_picks, pickable_objects, distance_mul
 
 
 
-def calc_metric(classes, pred_df, gt_df, pre="val", output_dir='./output/jobs/job_0'):
+def calc_metric(
+        pred_df: pd.DataFrame, 
+        gt_df: pd.DataFrame, 
+        score_thresholds: dict={},
+        particle_radius: dict={},
+        particle_weights: dict={},
+        output_dir: str='./output/jobs/job_0') -> dict:
+    
     solution = gt_df.copy()
     solution['id'] = range(len(solution))
-    #print(f'cal_metric solution\n{solution['particle_type'].unique()}')
-    
     submission = pred_df.copy()
-    #print(f'pred_df\n{pred_df}')
-    #submission['experiment'] = solution['experiment'].unique()[0]
-    #print(solution['experiment'].unique())
-    #print(f'unique 0: {solution['experiment'].unique()[0]}')
     submission['id'] = range(len(submission))
-    #print(f'cal_metric submission\n{submission['particle_type'].unique()}')
-
-    best_ths = []
+    best_ths = {k: v for k, v in score_thresholds.items() if v > 0}
     # Find the best probability thresholding for each class
-    print('Finding the best probability thresholding for each class')
-    for p in classes:
-        sol0a = solution[solution['particle_type']==p].copy()
-        sub0a = submission[submission['particle_type']==p].copy()
-        scores = []
-        ths = np.arange(0,0.5,0.005)
-        for c in tqdm(ths):
-            scores += [score(
-                        sol0a.copy(),
-                        sub0a[sub0a['conf']>c].copy(),
-                        row_id_column_name = 'id',
-                        distance_multiplier=0.5,
-                        beta=4,weighted = False)[0]]
-        best_th = ths[np.argmax(scores)]
-        best_ths += [best_th]
+    for p in score_thresholds.keys():
+        if p not in best_ths:
+            print(f'Finding the best threshold for {p}')
+            sol0a = solution[solution['particle_type']==p].copy()
+            sub0a = submission[submission['particle_type']==p].copy()
+            scores = []
+            ths = np.arange(0.05,0.5,0.005) # prevent over picks; can take a long time if two many picks 
+            for c in tqdm(ths):
+                scores += [score(
+                            sol0a.copy(),
+                            sub0a[sub0a['conf']>c].copy(),
+                            row_id_column_name = 'id',
+                            distance_multiplier=0.5,
+                            beta=4,
+                            particle_radius=particle_radius,
+                            particle_weights = particle_weights,
+                            weighted = False)[0]]
+            best_th = ths[np.argmax(scores)]
+            best_ths[p] = best_th
     
-    submission_pp = []
-    for th, p in zip(best_ths, classes):
-        submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
-    submission_pp = pd.concat(submission_pp)
-    submission_pp = submission_pp.sort_values(by='experiment')
-    submission_pp = submission_pp.drop_duplicates(subset=['experiment', 'x', 'y', 'z'])  # by default, keep first
-    print(f'Save predicted results in {output_dir}/val_pred_df_seed.csv')
-    submission_pp.to_csv(f"{output_dir}/val_pred_df_seed.csv",index=False)
-    
+    print(f'Best score threshold values {best_ths}')
+    submission_pp = get_final_submission(submission, score_thresholds=best_ths, output_dir=output_dir)
     score_pp, particle_scores = score(
         solution[solution['particle_type']!='beta-amylase'].copy(),
         submission_pp.copy(),
         row_id_column_name = 'id',
         distance_multiplier=0.5,
-        beta=4)
+        beta=4,
+        particle_radius=particle_radius,
+        particle_weights = particle_weights,
+        )
     
     #print(f'particle_scores: {particle_scores}')
     result = {'score_' + k: v for k,v in particle_scores.items()}
     result['score'] = score_pp
     print(result)
 
-    return result
+    return result, best_ths

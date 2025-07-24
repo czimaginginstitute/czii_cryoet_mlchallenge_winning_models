@@ -2,71 +2,141 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
-import copy, json
+import json
+import copy
 import pandas as pd
 from pathlib import Path
-from collections import defaultdict
 from czii_cryoet_models.modules.unet import FlexibleUNet
 from czii_cryoet_models.modules.utils import (
-    count_parameters, 
-    human_format,
     to_ce_target,
 )
 from czii_cryoet_models.loss.dense_cross_entropy import DenseCrossEntropy
 from czii_cryoet_models.data.augmentation import Mixup
-from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val
+from czii_cryoet_models.utils.ema import ModelEMA
+from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val, postprocess_pipeline_inference
 from czii_cryoet_models.postprocess.metric import calc_metric
 from czii_cryoet_models.postprocess.utils import (
-    sliding_window, 
-    mean_std_renormalization, 
-    decode_detections_with_nms,
-    postprocess_scores_offsets_into_submission,
-    postprocess_pipeline
+    sliding_window,
+    get_final_submission 
 )
 from czii_cryoet_models.utils.utils import (
     get_optimizer,
-    get_scheduler
 )
 
 
-class LitNet(pl.LightningModule):
+class SegNet(pl.LightningModule):
     def __init__(
         self,
         nclasses: int,
-        class_weights: np.ndarray,
+        class_loss_weights: dict,
         backbone_args: dict,
         lvl_weights: np.ndarray,
         mixup_beta: float = 1.0,
         mixup_p: float = 1.0,
         learning_rate: float = 1e-3,
         output_dir: str = './output/jobs/job_0/',
+        ema_decay: float = 0.999,
+        ema_start_epoch: int = 5,
+        particle_ids: dict = {},
+        particle_radius: dict = {},
+        particle_weights: dict = {},
+        score_thresholds: dict = {},
     ):
         super().__init__()
-        self.save_hyperparameters()
 
+        # Model setup
         self.n_classes = nclasses + 1  # +1 for background
         self.model = FlexibleUNet(**backbone_args)
+        self.ema = ModelEMA(self.model, decay=ema_decay)
+        self.ema_start_epoch = ema_start_epoch
+        self.learning_rate = learning_rate
+        self.output_dir = Path(output_dir)
 
-        self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
+        # Class weights setup
+        weights = [0.0] * nclasses  # suppress missing classes
+        for particle_name, weight in class_loss_weights.items():
+            if particle_name in particle_ids:
+                weights[particle_ids[particle_name]] = weight
+        weights.append(1.0)  # background class
+        self.class_loss_weights = torch.tensor(weights, dtype=torch.float32)
+
+        # Loss and training utilities
         self.lvl_weights = torch.tensor(lvl_weights, dtype=torch.float32)
-
-        self.loss_fn = DenseCrossEntropy(class_weights=self.class_weights)
+        self.loss_fn = DenseCrossEntropy(class_loss_weights=self.class_loss_weights)
         self.mixup = Mixup(mixup_beta)
         self.mixup_p = mixup_p
-        self.learning_rate = learning_rate
 
-        self.gt_dfs = []
-        self.submission_dfs = []
-        self.inference_dfs = []
-        
+        # Particle metadata
+        self.particle_ids = copy.deepcopy(particle_ids)
+        self.particle_radius = copy.deepcopy(particle_radius)
+        self.particle_weights = copy.deepcopy(particle_weights)
+        self.score_thresholds = copy.deepcopy(score_thresholds)
+
+        # Metrics tracking
         self.avg_train_losses = []
         self.train_losses = []
         self.avg_val_losses = []
         self.val_losses = []
-        self.avg_val_metrics = []
-        self.output_dir = Path(output_dir)
+        self.gt_dfs = []
+        self.submission_dfs = []
+        self.val_scores = []
+        self.best_val_scores = {'score': 0.0}
+        self.best_score_thresholds = {}
 
+        # Save all arguments as hyperparameters
+        self.save_hyperparameters()
 
+    
+    @property
+    def description(self) -> str:
+        desc_dict = {}
+        for (k1, v1), (k2, v2), (k3, v3), (k4, v4) in zip(
+            self.particle_ids.items(),
+            self.particle_radius.items(),
+            self.score_thresholds.items(),
+            self.particle_weights.items()
+        ):
+            desc_dict.setdefault(k1, {})['channel_id'] = v1
+            desc_dict.setdefault(k2, {})['radius'] = v2
+            desc_dict.setdefault(k3, {})['score_threshold'] = v3
+            desc_dict.setdefault(k4, {})['score_weight'] = v4
+        
+        desc_str = f"SegNet model predicting {self.n_classes-1} classes\n" 
+        return f"{desc_str}\nPrediction details:\n{json.dumps(desc_dict, indent=2)}"
+    
+    
+    @classmethod
+    def load_flexible_checkpoints(cls, checkpoint_path, pattern='*.ckpt', **kwargs):
+        checkpoint_paths = [Path(p.strip()) for p in checkpoint_path.split(',')]
+        loaded_models = []
+
+        for path in checkpoint_paths:
+            if path.is_file():
+                loaded_models.append(cls.load_from_checkpoint(str(path), **kwargs))
+            elif path.is_dir():
+                ckpt_files = sorted(path.glob(pattern))
+                if not ckpt_files:
+                    raise FileNotFoundError(f"No checkpoints matching pattern '{pattern}' in: {path}")
+                print(f"[INFO] Loading {len(ckpt_files)} checkpoints from {path}")
+                for p in ckpt_files:
+                    loaded_models.append(cls.load_from_checkpoint(str(p), **kwargs))
+            else:
+                raise FileNotFoundError(f"Invalid path: {path}")
+
+        if not loaded_models:
+            raise FileNotFoundError("No valid checkpoints found.")
+
+        return loaded_models
+    
+    
+    @classmethod
+    def ensemble_from_checkpoints(cls, checkpoint_path, pattern='*.ckpt', **kwargs):
+        models = cls.load_flexible_checkpoints(checkpoint_path, pattern=pattern, **kwargs)
+        ensemble_model = models[0]           # Use the first model instance as the wrapper
+        ensemble_model.models = models       # Inject all loaded models into `.models`
+        return ensemble_model
+    
+    
     def forward(self, x, y=None):
         if self.training and y is not None and torch.rand(1).item() < self.mixup_p:
             x, y = self.mixup(x, y)
@@ -74,88 +144,75 @@ class LitNet(pl.LightningModule):
         out = self.model(x)
 
         if y is None:
-            return {"logits": out[-1]}
+            return {"logits": out[-1]} # use the penultimate logits
 
         # Downsample ground truth to match each output level
         ys = [F.adaptive_max_pool3d(y, o.shape[-3:]) for o in out]
         losses = torch.stack([self.loss_fn(o, to_ce_target(ys[i]))[0] for i, o in enumerate(out)])
         lvl_weights = self.lvl_weights.to(losses.device)
-
         loss = (losses * lvl_weights).sum() / lvl_weights.sum()
+
         return {"loss": loss}
 
-    def training_step(self, batch, batch_idx):
+    
+    def training_step(self, batch, batch_idx: int, dataloader_idx: int=0):
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)
         self.train_losses.append(out["loss"].item())
+        if self.current_epoch >= self.ema_start_epoch:
+            self.ema.update(self.model)
+        
         return out["loss"]
 
-    def validation_step(self, batch, batch_idx):
-        pred, val_loss = sliding_window(
-            inputs=batch["input"],
-            predictor=self,
-            roi_size=(96, 96, 96),
-            sw_batch_size=1,
-            n_classes=self.n_classes,
-            overlap=(0.0, 0.0, 0.0),
-            z_scale=[0.5, 0.5, 0.5],
-            verbose=False,
-        )
+
+    def validation_step(self, batch, batch_idx: int, dataloader_idx: int=0):
+        pred, val_loss = sliding_window(inputs=batch["input"], predictor=self, n_classes=self.n_classes)
         gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
         self.gt_dfs.append(gt_df)
         self.submission_dfs.append(submission_df)
         self.log("val_loss", val_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.val_losses.append(val_loss)
+        
         return val_loss
 
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        # pred, _ = sliding_window(
-        #     inputs=batch["input"],
-        #     predictor=self,
-        #     roi_size=(96, 96, 96),
-        #     sw_batch_size=1,
-        #     n_classes=self.n_classes,
-        #     overlap=(0.21, 0.21, 0.21),
-        #     z_scale=[0.5, 0.5, 0.5],
-        #     verbose=False,
-        # )
-        # inference_df = postprocess_pipeline_val(pred, batch["meta"])
-        # self.inference_dfs.append(inference_df)
-        pred, val_loss = sliding_window(
-            inputs=batch["input"],
-            predictor=self,
-            roi_size=(96, 96, 96),
-            sw_batch_size=1,
-            n_classes=self.n_classes,
-            overlap=(0.0, 0.0, 0.0),
-            z_scale=[0.5, 0.5, 0.5],
-            verbose=False,
-        )
-        gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
-        self.gt_dfs.append(gt_df)
-        self.submission_dfs.append(submission_df)
+    def predict_step(self, batch, batch_idx: int, dataloader_idx: int=0):
+        with torch.inference_mode():
+            print(f"[INFO] GPU {self.device} | Using ensemble of {len(self.models)} models." if hasattr(self, 'models') else "[INFO] Single model inference")
 
+            # Input batch for this GPU
+            img = batch["input"]                        # Shape: [B, C, D, H, W]
+            img_flipped = torch.flip(img, [2, 3, 4])    # TTA
+            preds = []
+
+            # Get models to run (either ensemble or self)
+            models = getattr(self, "models", [self])
+
+            for model in models:
+                model.eval()
+
+                # Use model on same device as input (avoid .cuda())
+                p1, _ = sliding_window(inputs=img, predictor=model, n_classes=self.n_classes)
+                p2, _ = sliding_window(inputs=img_flipped, predictor=model, n_classes=self.n_classes)
+                p2 = torch.flip(p2, [1, 2, 3])  # Flip back
+
+                p_avg = (p1 + p2) / 2
+                preds.append(p_avg)
+
+            pred = torch.stack(preds).mean(dim=0)
+
+            # Postprocess for this GPU's batch only
+            if batch['dataset_type'] == 'copick':
+                gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
+                self.gt_dfs.append(gt_df)
+            else:
+                submission_df = postprocess_pipeline_inference(pred, batch["meta"])
+            self.submission_dfs.append(submission_df)
+     
     
-    def on_predict_epoch_end(self):
-        if self.gt_dfs and self.submission_dfs:
-            gt_df = pd.concat(self.gt_dfs, ignore_index=True)
-            submission_df = pd.concat(self.submission_dfs, ignore_index=True)
-            print(self.output_dir)
-            self.output_dir = Path(self.output_dir)
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            score = calc_metric(
-                [
-                    "apo-ferritin", "beta-amylase", "beta-galactosidase",
-                    "ribosome", "thyroglobulin", "virus-like-particle"
-                ],
-                submission_df, 
-                gt_df,
-                output_dir=str(self.output_dir)
-            )
-        
-        self.gt_dfs.clear()
-        self.submission_dfs.clear()
+    def on_train_epoch_end(self):
+        self.avg_train_losses.append(sum(self.train_losses)/len(self.train_losses))
+        self.train_losses = []
     
 
     def on_validation_epoch_end(self):
@@ -166,24 +223,27 @@ class LitNet(pl.LightningModule):
         if self.gt_dfs and self.submission_dfs:
             gt_df = pd.concat(self.gt_dfs, ignore_index=True)
             submission_df = pd.concat(self.submission_dfs, ignore_index=True)
-            score = calc_metric(
-                [
-                    "apo-ferritin", "beta-amylase", "beta-galactosidase",
-                    "ribosome", "thyroglobulin", "virus-like-particle"
-                ],
+            scores, ths = calc_metric(
                 submission_df, 
                 gt_df,
-                output_dir=str(self.output_dir)
+                score_thresholds=self.score_thresholds,
+                particle_radius = self.particle_radius,
+                particle_weights = self.particle_weights
             )
-            self.log("val_score", score["score"], on_epoch=True, prog_bar=True)
-            self.avg_val_metrics.append(score["score"])
+            self.log("val_score", scores['score'], on_epoch=True, prog_bar=True)
+            self.val_scores.append(scores)
+            if scores['score'] >= self.best_val_scores['score']:
+                self.best_val_scores = scores
+                self.best_score_thresholds = ths
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         json_file = self.output_dir / 'metrics.json'
         data = dict()
         data['avg_train_loss'] = self.avg_train_losses
         data['avg_val_loss'] = self.avg_val_losses
-        data['avg_val_metric'] = self.avg_val_metrics
+        data['val_scores'] = self.val_scores
+        data['best_val_score'] = self.best_val_scores
+        data['best_score_thresholds'] = self.best_score_thresholds
 
         with json_file.open("w") as f:
             json.dump(data, f, indent=2)
@@ -192,9 +252,33 @@ class LitNet(pl.LightningModule):
         self.submission_dfs.clear()
     
     
-    def on_train_epoch_end(self):
-        self.avg_train_losses.append(sum(self.train_losses)/len(self.train_losses))
-        self.train_losses = []
+    def on_predict_epoch_end(self):
+        self.output_dir = Path(self.output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.submission_dfs:
+            submission_df = pd.concat(self.submission_dfs, ignore_index=True)
+            # If ground truth is also available, compute metric
+            if self.gt_dfs:
+                gt_df = pd.concat(self.gt_dfs, ignore_index=True)
+                score, ths = calc_metric(
+                    submission_df,
+                    gt_df,
+                    score_thresholds=self.score_thresholds,
+                    particle_radius = self.particle_radius,
+                    particle_weights = self.particle_weights,
+                    output_dir=self.output_dir 
+                )
+
+            # Generate and save the final submission
+            get_final_submission(
+                submission_df,
+                score_thresholds=self.score_thresholds,
+                output_dir=str(self.output_dir)
+            )
+
+            self.gt_dfs.clear()
+            self.submission_dfs.clear()
 
 
     def configure_optimizers(self):
@@ -202,139 +286,3 @@ class LitNet(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
 
-# class LitNet(pl.LightningModule):
-#     def __init__(
-#         self,
-#         nclasses: int,
-#         class_weights: np.ndarray,
-#         backbone_args: dict,
-#         lvl_weights: np.ndarray,
-#         mixup_beta: float = 1.0,
-#         mixup_p: float = 1.0,
-#         learning_rate: float = 1e-3,
-#     ):
-#         super().__init__()
-#         self.save_hyperparameters()
-
-#         self.n_classes = nclasses+1 # add background class
-#         self.model = FlexibleUNet(**backbone_args)
-#         self.class_weights = torch.from_numpy(class_weights).float()
-#         self.lvl_weights = torch.from_numpy(lvl_weights).float()
-#         self.loss_fn = DenseCrossEntropy(class_weights=self.class_weights)
-#         self.mixup = Mixup(mixup_beta)
-#         self.mixup_p = mixup_p
-#         self.learning_rate = learning_rate
-#         self.epoch_metrics = {"avg_train_loss": [], "avg_val_loss": [], "avg_val_score": []}
-#         self.gt_dfs = []
-#         self.submission_dfs = []
-
-#     def forward(self, x, y=None):
-#         if self.training and y is not None and torch.rand(1).item() < self.mixup_p:  # random mix-up
-#             x, y = self.mixup(x, y)
-
-#         out = self.model(x)  # list of segmentation maps at different feature levels
-#         outputs = {}
-
-#         if y is not None:
-#             # Compute multiscale loss
-#             ys = [F.adaptive_max_pool3d(y, item.shape[-3:]) for item in out]  # downsample ground-truth point seg mask to match each output level size
-#             losses = torch.stack([
-#                 self.loss_fn(out[i], to_ce_target(ys[i]))[0] for i in range(len(out))
-#             ])
-
-#             lvl_weights = self.lvl_weights.to(losses.device)
-#             loss = (losses * lvl_weights).sum() / lvl_weights.sum()
-
-#             outputs['loss'] = loss
-
-#         if not self.training:
-#             outputs['logits'] = out[-1]  # output the segmentation map at the last level (1, 7, 48, 48, 48)
-
-#         return outputs
-
-    
-#     def training_step(self, batch):
-#         outputs = self(batch["input"], batch["target"])
-#         self.log('train_loss', outputs['loss'], on_step=True, on_epoch=True, prog_bar=True)
-#         return outputs['loss']
-    
-    
-#     def validation_step(self, batch):
-#         metas = batch["meta"]
-#         # Sliding window inference, get logits per tomogram
-#         pred, val_loss = sliding_window(
-#             inputs=batch["input"],
-#             predictor=self,
-#             roi_size=(96, 96, 96),
-#             sw_batch_size=1,
-#             n_classes=self.n_classes,
-#             overlap=(0.0, 0.0, 0.0),  # no overlap for validation inference
-#             z_scale=[0.5, 0.5, 0.5],
-#             verbose=False,
-#         )
-#         # pred before postprocess: torch.Size([7, 315, 315, 92])
-#         # W H D torch.Size([2, 1, 630, 630, 184])
-#         gt_df, submission_df = postprocess_pipeline_val(pred, metas)
-#         self.gt_dfs.append(gt_df)
-#         self.submission_dfs.append(submission_df)
-#         #self.log('val_score', f_beta, prog_bar=True, on_step=False, on_epoch=True)
-#         self.log('val_loss', val_loss, prog_bar=True, on_step=True, on_epoch=True)
-#         return val_loss
-    
-
-#     def predict_step(self, batch):
-#         print(batch['input'].shape) # MetaTensor (B, 1, D, H, W)
-#         #targets = batch['target']
-#         metas = batch["meta"]
-
-#         # Sliding window inference, get logits per tomogram
-#         pred, predic_loss = sliding_window(
-#             inputs=batch["input"],
-#             predictor=self,
-#             roi_size=(96, 96, 96),
-#             sw_batch_size=1,
-#             n_classes=self.n_classes,
-#             overlap=(0.21, 0.21, 0.21),  # no overlap for validation inference
-#             z_scale=[0.5, 0.5, 0.5],
-#             verbose=False,
-#         )
-#         D, H, W = batch["input"].shape[-3:]
-#         postprocess_pipeline_val(pred, metas)
-#         #postprocess_pipeline(pred, metas, D, H, W, mode='inference')
-
-    
-#     def on_train_epoch_end(self):
-#         avg_loss = self.trainer.callback_metrics[f"train_loss"].item()
-#         self.epoch_metrics[f"avg_train_loss"].append(avg_loss)
-
-
-#     def on_validation_epoch_end(self):
-#         """
-#         Args:
-#             outputs: list of dicts from validation_step
-#         """
-#         final_gt_df = pd.concat(self.gt_dfs, ignore_index=True)
-#         final_submission_df = pd.concat(self.submission_dfs, ignore_index=True)
-#         score_dict = calc_metric(["apo-ferritin", "beta-amylase", "beta-galactosidase", "ribosome", "thyroglobulin", "virus-like-particle"], final_submission_df, final_gt_df)
-#         self.log('val_score', score_dict["score"], prog_bar=True, on_step=False, on_epoch=True)
-#         avg_loss = self.trainer.callback_metrics[f"val_loss"].item()
-#         self.epoch_metrics[f"avg_val_loss"].append(avg_loss)
-#         self.gt_dfs = []
-#         self.submission_dfs = []
-
-    
-#     def configure_optimizers(self):
-#         optimizer = get_optimizer(
-#             self, 
-#             self.learning_rate, 
-#             sgd_momentum=0.0,
-#             sgd_nesterov=False
-#         )
-#         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
-#         #scheduler = get_scheduler()
-
-#         return {
-#             "optimizer": optimizer,
-#             "lr_scheduler": scheduler,
-#             "monitor": "val_loss"
-#         }

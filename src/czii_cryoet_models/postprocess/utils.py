@@ -4,11 +4,7 @@ import torch
 from torch import Tensor
 from monai.data.utils import dense_patch_slices
 from monai.inferers.utils import _get_scan_interval
-from collections import defaultdict
-import torch.nn.functional as F
-import copy
 import pandas as pd
-from czii_cryoet_models.postprocess.metric import score, process_run
 from czii_cryoet_models.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS, WEIGHTS
 
 from typing import List, Tuple, Union, Any, Iterable, Optional
@@ -118,6 +114,25 @@ def get_new_slices(slices, z_scale):
         new_slices += [tuple(slice(int(_si.start * z_s), int(_si.stop * z_s)) for _si, z_s in zip(__s, z_scale))]
     return new_slices
 
+
+def get_final_submission(
+        submission: pd.DataFrame, 
+        score_thresholds: dict={}, 
+        output_dir: str=''
+    ) -> pd.DataFrame:
+    submission_pp = []
+    for p, th in score_thresholds.items():
+        submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
+    submission_pp = pd.concat(submission_pp)
+    submission_pp = submission_pp.sort_values(by='experiment')
+    submission_pp = submission_pp.drop_duplicates(subset=['experiment', 'x', 'y', 'z'])  # by default, keep first
+    if str(output_dir):
+        print(f'Save predicted results in {str(output_dir)}/val_pred_df_seed.csv')
+        submission_pp.to_csv(f"{str(output_dir)}/val_pred_df_seed.csv",index=False)
+    
+    return submission_pp
+
+
 def sliding_window(
         inputs, 
         predictor, 
@@ -173,7 +188,7 @@ def decode_detections_with_nms(
         use_single_label_per_anchor=True, 
         use_centernet_nms=True, 
         pre_nms_top_k=None
-        ):
+    ):
     num_classes = scores[0].shape[0]
     min_score = np.asarray(min_score, dtype=np.float32).reshape(-1)
     if len(min_score) == 1:
@@ -233,116 +248,3 @@ def decode_detections_with_nms(
 
     return final_centers, final_labels, final_scores
 
-
-
-def postprocess_scores_offsets_into_submission(
-    scores,
-    offsets,
-    iou_threshold,
-    output_strides,
-    score_thresholds,
-    run_name,
-    use_centernet_nms,
-    use_single_label_per_anchor,
-    pre_nms_top_k,
-    submission_pick_points,
-    mode = "validation",
-):
-    topk_coords_px, topk_clses, topk_scores = decode_detections_with_nms(
-        scores=scores,
-        offsets=offsets,
-        strides=output_strides,
-        class_sigmas=TARGET_SIGMAS,
-        min_score=score_thresholds,
-        iou_threshold=iou_threshold,
-        use_centernet_nms=use_centernet_nms,
-        use_single_label_per_anchor=use_single_label_per_anchor,
-        pre_nms_top_k=pre_nms_top_k,
-    )
-    topk_scores = topk_scores.float().cpu().numpy()
-    top_coords = topk_coords_px.float().cpu().numpy() * ANGSTROMS_IN_PIXEL
-    topk_clses = topk_clses.cpu().numpy()
-    print(f'top_coords:\n{top_coords}topk_clses:\n{topk_clses}topk_scores:\n{topk_scores}')
-
-    submission = dict(
-        experiment=[],
-        particle_type=[],
-        score=[],
-        x=[],
-        y=[],
-        z=[],
-    )
-    for cls, coord, score in zip(topk_clses, top_coords, topk_scores):
-        #points[CLASS_INDEX_TO_CLASS_NAME[int(cls)]].append([float(coord[0], float(coord[1], float(coord[2]))])
-        submission["experiment"].append(run_name)
-        submission["particle_type"].append(CLASS_INDEX_TO_CLASS_NAME[int(cls)])
-        submission["score"].append(float(score))
-        submission["x"].append(float(coord[0]))
-        submission["y"].append(float(coord[1]))
-        submission["z"].append(float(coord[2]))
-        submission_pick_points[CLASS_INDEX_TO_CLASS_NAME[int(cls)]]['points'].append([float(coord[0]), float(coord[1]), float(coord[2])])
-    
-    for object_name, item in submission_pick_points.items():
-        submission_pick_points[object_name]['points'] = np.array(item['points'])
-
-    if mode == "inference":
-        df = pd.DataFrame.from_dict(submission)
-        df.to_csv("submission.csv", index=False)
-
-    return submission, submission_pick_points
-
-
-def postprocess_pipeline(pred, metas, D, H, W, mode="validation"):
-    # No TTA during validation step (to keep it fast)
-    # Apply softmax and interpolate back to original size (7, 315, 315, 92) -> (1, 7, 630, 630, 184)
-    pred = pred.softmax(0)[:-1][None]  # (1, 7, 315, 315, 92) 'trilinear' interpolation in x,y,z directions is only available for 5D tensors
-    pred = F.interpolate(pred, (D, H, W), mode="trilinear")[0] # (7, 630, 630, 184)
-    # Downsample again if needed (based on your inference code)
-    pred = F.interpolate(pred[None], (D // 2, H // 2, W // 2), mode="trilinear")[0] # (7, 315, 315, 92)
-    pred = pred.permute(0, 3, 2, 1)  # (C, W, H, D)
-
-    # Create fake offsets (zeros) for CenterNet decoding
-    fake_offsets = torch.zeros_like(pred[0:3])
-
-    all_results = {}
-    print(f'metas: {len(metas)}')
-    for meta in metas:
-        run = meta['run']
-        run_name = run.name
-        pixelsize = meta['pixelsize']
-        pickable_objects = meta['pickable_objects']
-        gt_pick_points = dict()
-        for object_name, radius in pickable_objects.items():
-            gt_pick_points[object_name] = {
-                'points': [],
-                'radius': radius
-            }
-        submission_pick_points = copy.deepcopy(gt_pick_points)
-        for pick in run.picks:
-            if pick.user_id == "curation":
-                points = pick.points
-                for p in points:
-                    object_name = pick.pickable_object_name
-                    gt_pick_points[object_name]['points'].append([p.location.x/pixelsize, p.location.y/pixelsize, p.location.z/pixelsize])
-        
-        for object_name, item in gt_pick_points.items():
-            gt_pick_points[object_name]['points'] = np.array(item['points'])
-        
-        submission, submission_pick_points = postprocess_scores_offsets_into_submission(
-            scores=[pred],
-            offsets=[fake_offsets],
-            iou_threshold=0.85,
-            output_strides=(2,),
-            score_thresholds=[0.16, 0.25, 0.13, 0.19, 0.18, 0.5],
-            run_name=run_name,
-            use_centernet_nms=True,
-            use_single_label_per_anchor=False,
-            pre_nms_top_k=16536,
-            submission_pick_points=submission_pick_points,
-            mode = mode
-        )
-
-        all_results[run_name] = process_run(gt_pick_points, submission_pick_points, pickable_objects)
-    print(all_results)
-    
-    return score(all_results, WEIGHTS)

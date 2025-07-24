@@ -2,9 +2,11 @@ import torch
 from torch.utils.data import DataLoader
 from czii_cryoet_models.model import SegNet
 from copick.impl.filesystem import CopickRootFSSpec
-from czii_cryoet_models.data.copick_dataset import CopickDataset
+from czii_cryoet_models.data.custom_dataset import CustomDataset
 from czii_cryoet_models.data.augmentation import get_basic_transform_list
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import CSVLogger
 from torch.utils.data import DataLoader
 import monai
 from pathlib import Path
@@ -15,14 +17,11 @@ def get_args():
     parser = argparse.ArgumentParser(
         description = "3D image segmentation inference",
     )
-    parser.add_argument("-c", "--copick_config", help="copick config file path")
-    parser.add_argument("-ts", "--run_names", type=str, default="", help="Tomogram dataset run names")
+    parser.add_argument("-ts", "--file_path", type=str, default="", help="Tomogram dataset filepath.")
     parser.add_argument("-bs", "--batch_size", type=int, default=1, help="batch size for data loader")
     parser.add_argument("-p", "--pretrained_weights", type=str, default="", help="Pretrained weights file paths (use comma for multiple paths). Default is None.")
     parser.add_argument("-pa", "--pattern", type=str, default="*.ckpt", help="The key for pattern matching checkpoints. Default is *.ckpt")
-    parser.add_argument("--pixelsize", type=float, default=10.0, help="Pixelsize. Default is 10.0A.")
-    parser.add_argument("-rt", "--reconstruction_type", type=str, default="denoised", help="Tomogram reconstruction type. Default is denoised.")
-    parser.add_argument("-u", "--user_id", type=str, default="curation", help="Needed for training, the user_id used for the ground truth picks.")
+    parser.add_argument("--pixelsize", type=float, default=10.012, help="Pixelsize. Default is 10.012A.")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving prediction results (csv).")
     parser.add_argument("-g", "--gpus", type=int, default=1, help="Number of GPUs for inference. Default is 1.")
     return parser.parse_args()
@@ -52,29 +51,26 @@ def data_collate_fn(batch):
 class DataModule(pl.LightningDataModule):
     def __init__(
             self, 
-            copick_root = None,
-            run_names = None,
+            root_path = None,
+            pattern: int="*.zarr",
             pixelsize = 10.012,
-            recon_type = 'denoised',
-            user_id = 'curation',
             batch_size: int = 1,
+            pickable_objects: dict={},
         ):
         super().__init__()
+        self.root_path = root_path
         self.batch_size = batch_size
-        self.copick_root = copick_root
-        self.run_names = run_names
+        self.pattern = pattern
         self.pixelsize = pixelsize
-        self.recon_type= recon_type
-        self.user_id = user_id
+        self.pickable_objects = pickable_objects
 
     def setup(self, stage=None):    # stage='train' only gets called for training
-        self.predict_dataset = CopickDataset(
-            copick_root = self.copick_root,
-            run_names = self.run_names,
+        self.predict_dataset = CustomDataset(
+            root_path = self.root_path,
+            pattern = self.pattern,
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
             pixelsize = self.pixelsize,
-            recon_type = self.recon_type,
-            user_id = self.user_id
+            pickable_objects = self.pickable_objects
         )
 
     def predict_dataloader(self):
@@ -97,10 +93,16 @@ class DataModule(pl.LightningDataModule):
 
 if __name__ == "__main__":
     args = get_args()
-    copick_root = CopickRootFSSpec.from_file(args.copick_config)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    data_module = DataModule(copick_root=copick_root, run_names=args.run_names.split(','), batch_size=args.batch_size, pixelsize=args.pixelsize)
+    pickable_objects = {'apo-ferritin': 60/0.866,
+                        'beta-amylase': 65/0.866,
+                        'beta-galactosidase': 90/0.866,
+                        'ribosome': 150/0.866,
+                        'thyroglobulin': 130/0.866,
+                        'virus-like-particle': 135/0.866}       
+    
+    data_module = DataModule(root_path=args.file_path, pickable_objects=pickable_objects, batch_size=args.batch_size, pixelsize=args.pixelsize)
 
     output_dir = Path(f'{args.output_dir}')
     print(f'making output dir {str(output_dir)}')
@@ -109,9 +111,9 @@ if __name__ == "__main__":
     # Load models from checkpoints
     ensemble_model = SegNet.ensemble_from_checkpoints(args.pretrained_weights, pattern=args.pattern)
     ensemble_model.output_dir = args.output_dir
-    #ensemble_model.score_thresholds = {"apo-ferritin": 0.16, "beta-amylase": 0.25, "beta-galactosidase": 0.13, "ribosome": 0.19, "thyroglobulin": 0.18, "virus-like-particle": 0.5}
-    ensemble_model.score_thresholds = {"apo-ferritin": 0.41, "beta-amylase": 0.36, "beta-galactosidase": 0.41, "ribosome": 0.19, "thyroglobulin": 0.295, "virus-like-particle": 0.24}
+    ensemble_model.score_thresholds = {"apo-ferritin": 0.16, "beta-amylase": 0.25, "beta-galactosidase": 0.13, "ribosome": 0.19, "thyroglobulin": 0.18, "virus-like-particle": 0.5}
 
     # Initialize trainer
     trainer = pl.Trainer(devices=1, accelerator="gpu") if args.gpus == 1 else pl.Trainer(devices=args.gpus, accelerator="gpu", strategy="ddp")
     predictions = trainer.predict(ensemble_model, datamodule=data_module)
+

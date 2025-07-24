@@ -138,50 +138,6 @@ def score(
     
     return aggregate_fbeta, dict(zip(particle_types,fbetas))
 
-def calc_metric(cfg, pp_out, val_df, pre="val"):
-    
-    particles = cfg.classes
-    pred_df = pp_out
-    
-    solution = val_df.copy()
-    solution['id'] = range(len(solution))
-    
-    submission = pred_df.copy()
-    submission['experiment'] = solution['experiment'].unique()[0]
-    submission['id'] = range(len(submission))
-
-    best_ths = []
-    for p in particles:
-        sol0a = solution[solution['particle_type']==p].copy()
-        sub0a = submission[submission['particle_type']==p].copy()
-        scores = []
-        ths = np.arange(0,0.5,0.005)
-        for c in ths:
-            scores += [score(
-                        sol0a.copy(),
-                        sub0a[sub0a['conf']>c].copy(),
-                        row_id_column_name = 'id',
-                        distance_multiplier=0.5,
-                        beta=4,weighted = False)[0]]
-        best_th = ths[np.argmax(scores)]
-        best_ths += [best_th]
-    
-    submission_pp = []
-    for th, p in zip(best_ths,particles):
-        submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
-    submission_pp = pd.concat(submission_pp)
-    
-    score_pp, particle_scores = score(
-        solution[solution['particle_type']!='beta-amylase'].copy(),
-        submission_pp.copy(),
-        row_id_column_name = 'id',
-        distance_multiplier=0.5,
-        beta=4)
-    
-    result = {'score_' + k: v for k,v in particle_scores.items()}
-    result['score'] = score_pp
-    return result
-
 
 if __name__ == "__main__":
 
@@ -193,7 +149,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    submission= pd.read_csv(args.submission).drop(columns=["score"])
+    submission= pd.read_csv(args.submission)#.drop(columns=["score"])
     val_df = pd.read_csv(args.gt)
     val_df = val_df[val_df['experiment'].isin(submission['experiment'].unique())].copy()
     
