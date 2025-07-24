@@ -1,4 +1,4 @@
-# CZII_ML_Challenge_Winning_Models
+# The daddies models 🧔
 The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main) in pytorch-lightning and copick.
 
 
