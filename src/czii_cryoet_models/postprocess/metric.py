@@ -182,7 +182,7 @@ def calc_metric(
         score_thresholds: dict={},
         particle_radius: dict={},
         particle_weights: dict={},
-        output_dir: str='./output/jobs/job_0') -> dict:
+        output_dir: str='') -> dict:
     
     solution = gt_df.copy()
     solution['id'] = range(len(solution))

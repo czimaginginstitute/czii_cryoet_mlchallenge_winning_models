@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from czii_cryoet_models.data.utils import get_copick_tomogram
 from collections import defaultdict
 import zarr
 
@@ -34,7 +35,7 @@ import zarr
 #         run_name = self.run_names[sample_idx]
 
 #         run = self.root.get_run(run_name)     
-#         zarr_store = run.get_voxel_spacing(10).get_tomogram('denoised').zarr() # <- FSStore
+#         zarr_store = run.get_voxel_spacing(10).get_tomograms('denoised')[0].zarr() # <- FSStore
 #         tomogram_array = zarr.open(zarr_store, mode='r')[0]  #.transpose(2, 1, 0)
 #         #crop = tomogram_array[:20, :20, :20][:]  # loads chunks 256 x 256 x 256, more chuncks need more time to load    
 #         shape =  tomogram_array.shape
@@ -96,15 +97,15 @@ class TrainDataset(Dataset):
             n_aug=1112,
             crop_radius=5, # in pixels; TODO if None, use points only; if < 1.0, create masks using a ratio of the radius; if > 1.0, create masks using the radius.
         ):
-        self.run_names = run_names   # list of metadata dicts (only run_names etc.)
+        self.run_names = [run_name for run_name in run_names if run_name]   
         self.root = copick_root
         self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
         self.pixelsize = pixelsize
-        self.recon_trype = recon_type
+        self.recon_type = recon_type
         self.user_id = user_id
         self.transforms = transforms
         self.n_aug = n_aug
-        self.len = len(run_names) * n_aug
+        self.len = len(self.run_names) * n_aug
         self.crop_radius = crop_radius  # in pixels
 
     def __len__(self):
@@ -113,11 +114,19 @@ class TrainDataset(Dataset):
     def __getitem__(self, idx):
         sample_idx = idx // self.n_aug
         run_name = self.run_names[sample_idx]
+        try:
+            run = self.root.get_run(run_name)
+            if run is None:
+                print(f"{run_name} does not exist. Returning None.")
+                return None 
+        except Exception as e:
+            print(f"Error getting run for run_name {run_name}. Returning None.")
+            return None
 
-        # Lazy load tomogram
-        run = self.root.get_run(run_name)
-        tomogram = run.get_voxel_spacing(self.pixelsize).get_tomogram(self.recon_trype).numpy().transpose(2,1,0)  # (W, H, D)
-
+        tomogram = get_copick_tomogram(run, self.pixelsize, self.recon_type)
+        if tomogram is None:
+            return None
+        
         locations = []
         classes = []
         for pick in run.picks:
@@ -209,32 +218,47 @@ class CopickDataset(Dataset):
             pixelsize: float=10.012,
             recon_type: str='denoised',
             user_id: str='curation',
-            transforms=None, 
+            transforms=None,
+            has_ground_truth=True, 
         ):
 
         self.root = copick_root
-        self.run_names = run_names
+        self.run_names = [run_name for run_name in run_names if run_name] 
         self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)} 
         self.pixelsize = pixelsize
         self.recon_type = recon_type
         self.user_id = user_id
         self.transforms = transforms
         self.pickable_objects = {obj.name: obj.radius for obj in self.root.pickable_objects}
+        self.has_ground_truth = has_ground_truth
     
     def __len__(self):
         return len(self.run_names)
     
     def __getitem__(self, idx):
         run_name = self.run_names[idx]
-        run = self.root.get_run(run_name)
-        tomogram = run.get_voxel_spacing(self.pixelsize).get_tomogram(self.recon_type).numpy().transpose(2,1,0) # (W, H, D)
+
+        # Lazy load tomogram
+        try:
+            run = self.root.get_run(run_name)
+            if run is None:
+                print(f"{run_name} does not exist. Returning None.")
+                return None 
+        except Exception as e:
+            print(f"Error getting run for run_name {run_name}. Returning None.")
+            return None
+
+        tomogram = get_copick_tomogram(run, self.pixelsize, self.recon_type)
+        if tomogram is None:
+            return None
+
         meta = {'run': run, 
                 'pixelsize': self.pixelsize, 
                 'pickable_objects': self.pickable_objects, 
                 'dim': tomogram.shape,
                 'user_id': self.user_id
         }
-        data = {'meta': meta, 'input': tomogram, 'dataset_type': 'copick'}
+        data = {'meta': meta, 'input': tomogram, 'dataset_type': 'copick', 'has_ground_truth': self.has_ground_truth}
         if self.transforms:
             data = self.transforms(data)       
         

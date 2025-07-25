@@ -33,7 +33,7 @@ class CustomDataset(Dataset):
 
         run_name = str(tomogram_path).split('/')[-1].split('.')[0]
         meta = {'run_name': run_name, 'pixelsize': self.pixelsize, 'pickable_objects': self.pickable_objects, 'dim': tomogram.shape}
-        data = {'meta': meta, 'input': tomogram, 'dataset_type': 'custom'}
+        data = {'meta': meta, 'input': tomogram, 'dataset_type': 'custom', 'has_ground_truth': False}
         if self.transforms:
             data = self.transforms(data)       
         

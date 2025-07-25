@@ -9,31 +9,12 @@ from pathlib import Path
 import monai
 from torch.utils.data import DataLoader
 from czii_cryoet_models.model import SegNet
+from czii_cryoet_models.data.utils import worker_init_fn, collate_fn, train_collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.copick_dataset import CopickDataset, TrainDataset
 from czii_cryoet_models.data.augmentation import train_aug, get_basic_transform_list
 from czii_cryoet_models.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS
 
-
-
-def worker_init_fn(worker_id):
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
-
-
-def collate_fn(batch):
-    keys = batch[0].keys()
-    batch_dict = {key:torch.cat([b[key] for b in batch]) for key in keys}
-    return batch_dict
-
-def data_collate_fn(batch):
-    collated = {}
-    for key in batch[0]:
-        values = [b[key] for b in batch]
-        if isinstance(values[0], torch.Tensor):
-            collated[key] = torch.stack(values)
-        else:
-            collated[key] = values  # leave as list
-    return collated
 
 
 def get_args():
@@ -112,7 +93,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size, #self.batch_size,  # 8
             num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
-            collate_fn=collate_fn,
+            collate_fn=train_collate_fn,
             drop_last= True,
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
@@ -129,7 +110,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=1, #self.batch_size
             num_workers=1, 
             pin_memory=False,
-            collate_fn=data_collate_fn,
+            collate_fn=collate_fn,
             drop_last= True,
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
