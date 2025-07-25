@@ -235,9 +235,11 @@ python inference_custom.py \
 
 Coming soon.
 
-## 🤝 Contributing
+## 🤝 Contributor covenant code of conduct
 
 This project adheres to the Contributor Covenant code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to opensource@chanzuckerberg.com.
+
+Responsible Use: We are committed to advancing the responsible development and use of artificial intelligence. Please follow our [Acceptable Use Policy](https://virtualcellmodels.cziscience.com/acceptable-use-policy) when engaging with the model.
 
 ## 🔒 Security
 
