@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from czii_cryoet_models.model import SegNet
+from czii_cryoet_models.data.utils import worker_init_fn, collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.custom_dataset import CustomDataset
 from czii_cryoet_models.data.augmentation import get_basic_transform_list
@@ -25,27 +26,6 @@ def get_args():
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving prediction results (csv).")
     parser.add_argument("-g", "--gpus", type=int, default=1, help="Number of GPUs for inference. Default is 1.")
     return parser.parse_args()
-
-
-def worker_init_fn(worker_id):
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
-
-
-def collate_fn(batch):
-    keys = batch[0].keys()
-    batch_dict = {key:torch.cat([b[key] for b in batch]) for key in keys}
-    return batch_dict
-
-
-def data_collate_fn(batch):
-    collated = {}
-    for key in batch[0]:
-        values = [b[key] for b in batch]
-        if isinstance(values[0], torch.Tensor):
-            collated[key] = torch.stack(values)
-        else:
-            collated[key] = values  # leave as list
-    return collated
 
 
 class DataModule(pl.LightningDataModule):
@@ -82,7 +62,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size, 
             num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
-            collate_fn=data_collate_fn,
+            collate_fn=collate_fn,
             drop_last= True,
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,

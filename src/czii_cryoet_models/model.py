@@ -28,9 +28,9 @@ class SegNet(pl.LightningModule):
     def __init__(
         self,
         nclasses: int,
-        class_loss_weights: dict,
         backbone_args: dict,
         lvl_weights: np.ndarray,
+        class_loss_weights: dict={},
         mixup_beta: float = 1.0,
         mixup_p: float = 1.0,
         learning_rate: float = 1e-3,
@@ -156,6 +156,11 @@ class SegNet(pl.LightningModule):
 
     
     def training_step(self, batch, batch_idx: int, dataloader_idx: int=0):
+        if batch is None:
+            print(f"Skipping training batch {batch_idx} as it was None (empty after collation).")
+            self.log('skipped_train_batches', 1, on_step=False, on_epoch=True, reduce_fx=torch.sum)
+            return None # Return None to skip this batch in Lightning's training loop
+        
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)
         self.train_losses.append(out["loss"].item())
@@ -166,6 +171,11 @@ class SegNet(pl.LightningModule):
 
 
     def validation_step(self, batch, batch_idx: int, dataloader_idx: int=0):
+        if batch is None:
+            print(f"Skipping validation batch {batch_idx} as it was None (empty after collation).")
+            self.log('skipped_val_batches', 1, on_step=False, on_epoch=True, reduce_fx=torch.sum) # Optional: log skipped batches
+            return None # Return None to skip this batch for validation metrics and logging
+
         pred, val_loss = sliding_window(inputs=batch["input"], predictor=self, n_classes=self.n_classes)
         gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
         self.gt_dfs.append(gt_df)
@@ -177,6 +187,10 @@ class SegNet(pl.LightningModule):
 
 
     def predict_step(self, batch, batch_idx: int, dataloader_idx: int=0):
+        if batch is None:
+            print(f"Skipping prediction batch {batch_idx} as it was None (empty after collation).")
+            return None # Return None to skip this batch in the prediction output
+       
         with torch.inference_mode():
             print(f"[INFO] GPU {self.device} | Using ensemble of {len(self.models)} models." if hasattr(self, 'models') else "[INFO] Single model inference")
 
@@ -202,7 +216,7 @@ class SegNet(pl.LightningModule):
             pred = torch.stack(preds).mean(dim=0)
 
             # Postprocess for this GPU's batch only
-            if batch['dataset_type'] == 'copick':
+            if batch['dataset_type'] == 'copick' and batch['has_ground_truth']:
                 gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
                 self.gt_dfs.append(gt_df)
             else:

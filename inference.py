@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from czii_cryoet_models.model import SegNet
+from czii_cryoet_models.data.utils import worker_init_fn, collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
 from czii_cryoet_models.data.copick_dataset import CopickDataset
 from czii_cryoet_models.data.augmentation import get_basic_transform_list
@@ -25,28 +26,8 @@ def get_args():
     parser.add_argument("-u", "--user_id", type=str, default="curation", help="Needed for training, the user_id used for the ground truth picks.")
     parser.add_argument("-o", "--output_dir", type=str, default="./output", help="output dir for saving prediction results (csv).")
     parser.add_argument("-g", "--gpus", type=int, default=1, help="Number of GPUs for inference. Default is 1.")
+    parser.add_argument("-gt", "--has_ground_truth", type=bool, default=False, help="Inference with ground truth annoatations")
     return parser.parse_args()
-
-
-def worker_init_fn(worker_id):
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
-
-
-def collate_fn(batch):
-    keys = batch[0].keys()
-    batch_dict = {key:torch.cat([b[key] for b in batch]) for key in keys}
-    return batch_dict
-
-
-def data_collate_fn(batch):
-    collated = {}
-    for key in batch[0]:
-        values = [b[key] for b in batch]
-        if isinstance(values[0], torch.Tensor):
-            collated[key] = torch.stack(values)
-        else:
-            collated[key] = values  # leave as list
-    return collated
 
 
 class DataModule(pl.LightningDataModule):
@@ -58,6 +39,7 @@ class DataModule(pl.LightningDataModule):
             recon_type = 'denoised',
             user_id = 'curation',
             batch_size: int = 1,
+            has_ground_truth: bool=False,
         ):
         super().__init__()
         self.batch_size = batch_size
@@ -66,6 +48,7 @@ class DataModule(pl.LightningDataModule):
         self.pixelsize = pixelsize
         self.recon_type= recon_type
         self.user_id = user_id
+        self.has_ground_truth = has_ground_truth
 
     def setup(self, stage=None):    # stage='train' only gets called for training
         self.predict_dataset = CopickDataset(
@@ -74,7 +57,8 @@ class DataModule(pl.LightningDataModule):
             transforms = monai.transforms.Compose(get_basic_transform_list(["input"])),    
             pixelsize = self.pixelsize,
             recon_type = self.recon_type,
-            user_id = self.user_id
+            user_id = self.user_id,
+            has_ground_truth = self.has_ground_truth
         )
 
     def predict_dataloader(self):
@@ -86,7 +70,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size, 
             num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
-            collate_fn=data_collate_fn,
+            collate_fn=collate_fn,
             drop_last= True,
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
@@ -100,7 +84,14 @@ if __name__ == "__main__":
     copick_root = CopickRootFSSpec.from_file(args.copick_config)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    data_module = DataModule(copick_root=copick_root, run_names=args.run_names.split(','), batch_size=args.batch_size, pixelsize=args.pixelsize)
+    data_module = DataModule(copick_root=copick_root, 
+                             run_names=args.run_names.split(','), 
+                             batch_size=args.batch_size, 
+                             pixelsize=args.pixelsize, 
+                             recon_type=args.reconstruction_type,
+                             user_id = args.user_id, 
+                             has_ground_truth=args.has_ground_truth
+                             )
 
     output_dir = Path(f'{args.output_dir}')
     print(f'making output dir {str(output_dir)}')
