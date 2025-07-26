@@ -37,23 +37,23 @@ def get_copick_tomogram(run, pixelsize, recon_type):
     try:
         voxel_spacing_obj = run.get_voxel_spacing(str(pixelsize))
         if voxel_spacing_obj is None:
-            print(f"Warning: get_voxel_spacing returned None for run {run.run_name} with pixelsize {pixelsize}.")
+            print(f"Warning: get_voxel_spacing returned None for run {run.name} with pixelsize {pixelsize}.")
             return None
     except Exception as e:
-        print(f"Error getting voxel spacing for run {run.run_name} (pixelsize: {pixelsize}): {e}. Returning None.")
+        print(f"Error getting voxel spacing for run {run.name} (pixelsize: {pixelsize}): {e}. Returning None.")
         return None
 
     tomograms_list = None
     try:
         tomograms_list = voxel_spacing_obj.get_tomograms(str(recon_type))
         if not tomograms_list: # Checks for None or empty list
-            print(f"Warning: get_tomograms returned an empty list or None for run {run.run_name} (pixelsize: {pixelsize}, recon_type: {recon_type}).")
+            print(f"Warning: get_tomograms returned an empty list or None for run {run.name} (pixelsize: {pixelsize}, recon_type: {recon_type}).")
             return None
     except AttributeError as e:
-        print(f"Error calling get_tomograms on voxel_spacing_obj for run {run.run_name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}.")
+        print(f"Error calling get_tomograms on voxel_spacing_obj for run {run.name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}.")
         return None
     except Exception as e:
-        print(f"Error getting tomograms list for run {run.run_name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}.")
+        print(f"Error getting tomograms list for run {run.name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}.")
         return None
 
     tomogram = None
@@ -62,15 +62,15 @@ def get_copick_tomogram(run, pixelsize, recon_type):
         
     except IndexError:
         # This specifically catches if tomograms_list was not empty but tomograms_list[0] failed
-        print(f"Warning: tomograms_list was unexpectedly empty after initial check for run {run.run_name} (pixelsize: {pixelsize}, recon_type: {recon_type}).")
+        print(f"Warning: tomograms_list was unexpectedly empty after initial check for run {run.name} (pixelsize: {pixelsize}, recon_type: {recon_type}).")
         return None
     except AttributeError as e:
         # This catches if tomograms_list[0] doesn't have .numpy() or .transpose()
-        print(f"Error with numpy/transpose on tomogram object for run {run.run_name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}.")
+        print(f"Error with numpy/transpose on tomogram object for run {run.name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}.")
         return None
     except Exception as e:
         # General catch-all for any other unexpected errors in this final step
-        print(f"An unexpected error occurred during final tomogram processing for run {run.run_name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}. Returning None.")
+        print(f"An unexpected error occurred during final tomogram processing for run {run.name} (pixelsize: {pixelsize}, recon_type: {recon_type}): {e}. Returning None.")
         return None
     
     return tomogram
