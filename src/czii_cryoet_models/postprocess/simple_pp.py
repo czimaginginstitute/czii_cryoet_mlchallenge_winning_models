@@ -29,12 +29,12 @@ def predict_volume(
         dim,
     ):
     classes = pickable_objects.keys()
-    img = logits[None].cuda()  # (1, 7, 315, 315, 92)
+    img = logits[None].cuda()  # (1, 7, 315, 315, 92) for 6 classes + background
     resized_img = torch.nn.functional.interpolate(img, size=dim, mode='trilinear', align_corners=False) # upsize to (1, 7, 630, 630, 184)
     #resized_img = torch.nn.functional.interpolate(img, size=(w//2,h//2,d//2), mode='trilinear', align_corners=False) # downsize to (1, 7, 315, 315, 92)
     preds = resized_img[0].softmax(0)[:-1] # remove the background channel
     pred_df = []
- 
+    
     for i,p in enumerate(classes):
         p1 = preds[i][None].cuda()
         y = simple_nms(p1, nms_radius=int(0.5 * pickable_objects[p]/pixelsize))  # score of maximum points
@@ -73,12 +73,13 @@ def postprocess_pipeline_val(pred, metas):
                 points = pick.points
                 for p in points:
                     object_name = pick.pickable_object_name
-                    gt_pick_points[object_name]['points'].append([p.location.x, p.location.y, p.location.z])
-                    gt_df['x'].append(p.location.x)
-                    gt_df['y'].append(p.location.y)
-                    gt_df['z'].append(p.location.z)
-                    gt_df['particle_type'].append(object_name) 
-                    gt_df['experiment'].append(run_name)      
+                    if object_name in gt_pick_points:
+                        gt_pick_points[object_name]['points'].append([p.location.x, p.location.y, p.location.z])
+                        gt_df['x'].append(p.location.x)
+                        gt_df['y'].append(p.location.y)
+                        gt_df['z'].append(p.location.z)
+                        gt_df['particle_type'].append(object_name) 
+                        gt_df['experiment'].append(run_name)      
         
         gt_df = pd.DataFrame(gt_df)
         gt_dfs.append(gt_df)

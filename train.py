@@ -123,6 +123,15 @@ class DataModule(pl.LightningDataModule):
 if __name__ == "__main__":
     args = get_args()
     copick_root = CopickRootFSSpec.from_file(args.copick_config)
+    copick_pickable_objects = []
+    for obj in copick_root.pickable_objects:
+        if obj.is_particle:
+            if obj.radius:
+                copick_pickable_objects.append(obj)
+            else:
+                print(f'Skipping {obj.name} in data loading becuase it does not have a radius in the copick configuration file.')
+    
+    print(f'copick_pickable_objects {len(copick_pickable_objects)}')
     device = "cuda" if torch.cuda.is_available() else "cpu"
     data_module = DataModule(copick_root=copick_root, 
                              train_run_names=args.train_run_names.split(','), 
@@ -144,19 +153,19 @@ if __name__ == "__main__":
         backbone_args = dict(
             spatial_dims=3,    
             in_channels=1,
-            out_channels=len(copick_root.pickable_objects),
+            out_channels=len(copick_pickable_objects),
             backbone='resnet34',
             pretrained=False
         )
         model = SegNet(        
-            nclasses = len(copick_root.pickable_objects),
-            class_loss_weights = {p.name:p.metadata['class_loss_weight'] for p in copick_root.pickable_objects},
+            nclasses = len(copick_pickable_objects),
+            class_loss_weights = {p.name:p.metadata['class_loss_weight'] for p in copick_pickable_objects},
             backbone_args = backbone_args,
             lvl_weights = np.array([0, 0, 1, 1]),
-            particle_ids = {p.name:i for i,p in enumerate(copick_root.pickable_objects)},
-            particle_radius = {p.name:p.radius for p in copick_root.pickable_objects},
-            particle_weights = {p.name:p.metadata['score_weight'] for p in copick_root.pickable_objects},
-            score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_root.pickable_objects},
+            particle_ids = {p.name:i for i,p in enumerate(copick_pickable_objects)},
+            particle_radius = {p.name:p.radius for p in copick_pickable_objects},
+            particle_weights = {p.name:p.metadata['score_weight'] for p in copick_pickable_objects},
+            score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_pickable_objects},
             output_dir = f'{args.output_dir}/jobs/{args.job_id}'
         )
 

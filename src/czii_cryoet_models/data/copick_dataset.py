@@ -99,7 +99,13 @@ class TrainDataset(Dataset):
         ):
         self.run_names = [run_name for run_name in run_names if run_name]   
         self.root = copick_root
-        self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
+        # skip non-particles and particles do not have a radius
+        self.pickable_objects ={}
+        for obj in self.root.pickable_objects:
+            if obj.is_particle and obj.radius:
+                self.pickable_objects[obj.name] = obj.radius
+
+        self.class2id = {p:i for i,p in enumerate(self.pickable_objects.keys())}
         self.pixelsize = pixelsize
         self.recon_type = recon_type
         self.user_id = user_id
@@ -130,7 +136,7 @@ class TrainDataset(Dataset):
         locations = []
         classes = []
         for pick in run.picks:
-            if pick.user_id == self.user_id:
+            if pick.user_id == self.user_id and pick.pickable_object_name in self.class2id.keys():
                 for point in pick.points:
                     locations.append([point.location.x, point.location.y, point.location.z])
                     classes.append(self.class2id[pick.pickable_object_name])
@@ -223,13 +229,17 @@ class CopickDataset(Dataset):
         ):
 
         self.root = copick_root
-        self.run_names = [run_name for run_name in run_names if run_name] 
-        self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)} 
+        self.run_names = [run_name for run_name in run_names if run_name]  
         self.pixelsize = pixelsize
         self.recon_type = recon_type
         self.user_id = user_id
         self.transforms = transforms
-        self.pickable_objects = {obj.name: obj.radius for obj in self.root.pickable_objects}
+        # skip non-particles and particles do not have a radius
+        self.pickable_objects ={}
+        for obj in self.root.pickable_objects:
+            if obj.is_particle and obj.radius:
+                self.pickable_objects[obj.name] = obj.radius
+
         self.has_ground_truth = has_ground_truth
     
     def __len__(self):
