@@ -26,6 +26,7 @@ def get_args():
     parser.add_argument("-vts", "--val_run_names", type=str, default="", help="Tomogram dataset run names for validation")
     parser.add_argument("-rt", "--reconstruction_type", type=str, default="denoised", help="Tomogram reconstruction type. Default is denoised.")
     parser.add_argument("-u", "--user_id", type=str, default="curation", help="Needed for training, the user_id used for the ground truth picks.")
+    parser.add_argument("-s", "--session_id", type=str, default="None", help="Needed for training, the session_id used for the ground truth picks. Default is None.")
     parser.add_argument("-bs", "--batch_size", type=int, default=8, help="batch size for data loader")
     parser.add_argument("-n", "--n_aug", type=int, default=1112, help="Data augmentation copy. Default is 1112.")
     parser.add_argument("-l", "--learning_rate", type=float, default=1e-4, help="Learning rate for optimizer")
@@ -49,6 +50,7 @@ class DataModule(pl.LightningDataModule):
             val_run_names = None,
             recon_type = 'denoised',
             user_id = 'curation',
+            session_id = 'None',
             pixelsize = 10.012,
             batch_size: int = 1,
             n_aug: int = 1112,
@@ -60,6 +62,7 @@ class DataModule(pl.LightningDataModule):
         self.val_run_names = val_run_names
         self.recon_type = recon_type
         self.user_id = user_id
+        self.session_id = session_id
         self.pixelsize = pixelsize
         self.n_aug = n_aug
 
@@ -71,6 +74,7 @@ class DataModule(pl.LightningDataModule):
             pixelsize =  self.pixelsize,
             recon_type = self.recon_type,
             user_id = self.user_id,
+            session_id = self.session_id,
             n_aug=self.n_aug,
             crop_radius = 2
         )
@@ -131,7 +135,6 @@ if __name__ == "__main__":
             else:
                 print(f'Skipping {obj.name} in data loading becuase it does not have a radius in the copick configuration file.')
     
-    print(f'copick_pickable_objects {len(copick_pickable_objects)}')
     device = "cuda" if torch.cuda.is_available() else "cpu"
     data_module = DataModule(copick_root=copick_root, 
                              train_run_names=args.train_run_names.split(','), 
@@ -139,7 +142,8 @@ if __name__ == "__main__":
                              batch_size=args.batch_size, 
                              pixelsize=args.pixelsize,
                              recon_type=args.reconstruction_type,
-                             user_id = args.user_id,
+                             user_id=args.user_id,
+                             session_id=args.session_id,
                              n_aug=args.n_aug
                              )
     output_dir = Path(f'{args.output_dir}/jobs/{args.job_id}')
