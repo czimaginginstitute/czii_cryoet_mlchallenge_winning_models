@@ -153,7 +153,7 @@ def sliding_window(
     batch_slices = np.array_split(slices, n_batches)
     out_slices = np.array_split(get_new_slices(slices, z_scale), n_batches)
 
-    out_shape = (torch.tensor(image_size) * torch.tensor(z_scale)).long().tolist()
+    out_shape = (torch.tensor(image_size) * torch.tensor()).long().tolist()
     out_preds = torch.zeros((C, *out_shape), dtype=inputs.dtype, device=inputs.device)
     out_counts = torch.zeros((C, *out_shape), dtype=torch.int8, device=inputs.device)
     out_loss = 0

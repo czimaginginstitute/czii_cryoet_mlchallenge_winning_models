@@ -95,7 +95,7 @@ class DataModule(pl.LightningDataModule):
             #sampler=sampler,
             #shuffle=(sampler is None),
             batch_size=self.batch_size, #self.batch_size,  # 8
-            num_workers=self.batch_size,  # one worker per batch
+            num_workers=4,  # should not be too many
             pin_memory=False,
             collate_fn=train_collate_fn,
             drop_last= True,
@@ -111,8 +111,8 @@ class DataModule(pl.LightningDataModule):
             self.val_dataset,   # 1112*4
             #sampler=sampler,
             #shuffle=(sampler is None),
-            batch_size=1, #self.batch_size
-            num_workers=1, 
+            batch_size=self.batch_size, 
+            num_workers=4, 
             pin_memory=False,
             collate_fn=collate_fn,
             drop_last= True,
