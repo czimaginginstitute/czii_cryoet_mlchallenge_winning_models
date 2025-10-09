@@ -113,6 +113,7 @@ class SegNet(pl.LightningModule):
         for path in checkpoint_paths:
             if path.is_file():
                 loaded_models.append(cls.load_from_checkpoint(str(path), **kwargs))
+                print(f"[INFO] Loading one checkpoint from {path}")
             elif path.is_dir():
                 ckpt_files = sorted(path.glob(pattern))
                 if not ckpt_files:
@@ -160,6 +161,9 @@ class SegNet(pl.LightningModule):
             print(f"Skipping training batch {batch_idx} as it was None (empty after collation).")
             self.log('skipped_train_batches', 1, on_step=False, on_epoch=True, reduce_fx=torch.sum)
             return None # Return None to skip this batch in Lightning's training loop
+        
+        if batch_idx == 0:
+            print("Input batch shape:", tuple(batch["input"].shape))
         
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)

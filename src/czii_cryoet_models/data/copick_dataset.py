@@ -92,17 +92,25 @@ class TrainDataset(Dataset):
             run_names: list=[],
             pixelsize: float=10.012,
             recon_type: str='denoised',
-            user_id: str='curation', 
+            user_id: str='curation',
+            session_id: str='None', 
             transforms=None,
             n_aug=1112,
             crop_radius=5, # in pixels; TODO if None, use points only; if < 1.0, create masks using a ratio of the radius; if > 1.0, create masks using the radius.
         ):
         self.run_names = [run_name for run_name in run_names if run_name]   
         self.root = copick_root
-        self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)}
+        # skip non-particles and particles do not have a radius
+        self.pickable_objects ={}
+        for obj in self.root.pickable_objects:
+            if obj.is_particle and obj.radius:
+                self.pickable_objects[obj.name] = obj.radius
+
+        self.class2id = {p:i for i,p in enumerate(self.pickable_objects.keys())}
         self.pixelsize = pixelsize
         self.recon_type = recon_type
         self.user_id = user_id
+        self.session_id = session_id
         self.transforms = transforms
         self.n_aug = n_aug
         self.len = len(self.run_names) * n_aug
@@ -130,10 +138,16 @@ class TrainDataset(Dataset):
         locations = []
         classes = []
         for pick in run.picks:
-            if pick.user_id == self.user_id:
-                for point in pick.points:
-                    locations.append([point.location.x, point.location.y, point.location.z])
-                    classes.append(self.class2id[pick.pickable_object_name])
+            if self.session_id == 'None':
+                if pick.user_id == self.user_id and pick.pickable_object_name in self.class2id.keys():
+                    for point in pick.points:
+                        locations.append([point.location.x, point.location.y, point.location.z])
+                        classes.append(self.class2id[pick.pickable_object_name])
+            else:
+                 if pick.user_id == self.user_id and pick.session_id == self.session_id and pick.pickable_object_name in self.class2id.keys():
+                    for point in pick.points:
+                        locations.append([point.location.x, point.location.y, point.location.z])
+                        classes.append(self.class2id[pick.pickable_object_name])
 
         locations = np.array(locations) / self.pixelsize
         if self.crop_radius is not None:
@@ -223,13 +237,17 @@ class CopickDataset(Dataset):
         ):
 
         self.root = copick_root
-        self.run_names = [run_name for run_name in run_names if run_name] 
-        self.class2id = {p.name:i for i,p in enumerate(self.root.pickable_objects)} 
+        self.run_names = [run_name for run_name in run_names if run_name]  
         self.pixelsize = pixelsize
         self.recon_type = recon_type
         self.user_id = user_id
         self.transforms = transforms
-        self.pickable_objects = {obj.name: obj.radius for obj in self.root.pickable_objects}
+        # skip non-particles and particles do not have a radius
+        self.pickable_objects ={}
+        for obj in self.root.pickable_objects:
+            if obj.is_particle and obj.radius:
+                self.pickable_objects[obj.name] = obj.radius
+
         self.has_ground_truth = has_ground_truth
     
     def __len__(self):
