@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "czii_cryoet_models"
-version = "0.1.0"
-description = "A consolidate place to host training and inference codes of the 2024-2025 CZII ML Challenge winning models."
+version = "1.0.1"
+description = "A training and inference codes of the 2024-2025 CZII ML Challenge winning models."
 authors = [
     { name="Zhuowen Zhao", email="kevin.zhao@czii.org" },
     { name="Christof Henkel", email="chenkel@nvidia.com" },
