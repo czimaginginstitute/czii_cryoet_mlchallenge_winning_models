@@ -8,12 +8,12 @@ import numpy as np
 from pathlib import Path
 import monai
 from torch.utils.data import DataLoader
-from czii_cryoet_models.model import SegNet
-from czii_cryoet_models.data.utils import worker_init_fn, collate_fn, train_collate_fn
+from topcup.model import SegNet
+from topcup.data.utils import worker_init_fn, collate_fn, train_collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
-from czii_cryoet_models.data.copick_dataset import CopickDataset, TrainDataset
-from czii_cryoet_models.data.augmentation import train_aug, get_basic_transform_list
-from czii_cryoet_models.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS
+from topcup.data.copick_dataset import CopickDataset, TrainDataset
+from topcup.data.augmentation import train_aug, get_basic_transform_list
+from topcup.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS
 
 
 

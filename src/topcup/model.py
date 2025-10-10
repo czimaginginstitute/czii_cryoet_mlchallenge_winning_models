@@ -6,20 +6,20 @@ import json
 import copy
 import pandas as pd
 from pathlib import Path
-from czii_cryoet_models.modules.unet import FlexibleUNet
-from czii_cryoet_models.modules.utils import (
+from topcup.modules.unet import FlexibleUNet
+from topcup.modules.utils import (
     to_ce_target,
 )
-from czii_cryoet_models.loss.dense_cross_entropy import DenseCrossEntropy
-from czii_cryoet_models.data.augmentation import Mixup
-from czii_cryoet_models.utils.ema import ModelEMA
-from czii_cryoet_models.postprocess.simple_pp import postprocess_pipeline_val, postprocess_pipeline_inference
-from czii_cryoet_models.postprocess.metric import calc_metric
-from czii_cryoet_models.postprocess.utils import (
+from topcup.loss.dense_cross_entropy import DenseCrossEntropy
+from topcup.data.augmentation import Mixup
+from topcup.utils.ema import ModelEMA
+from topcup.postprocess.simple_pp import postprocess_pipeline_val, postprocess_pipeline_inference
+from topcup.postprocess.metric import calc_metric
+from topcup.postprocess.utils import (
     sliding_window,
     get_final_submission 
 )
-from czii_cryoet_models.utils.utils import (
+from topcup.utils.utils import (
     get_optimizer,
 )
 

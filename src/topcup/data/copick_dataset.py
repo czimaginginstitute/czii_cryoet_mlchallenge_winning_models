@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from czii_cryoet_models.data.utils import get_copick_tomogram
+from topcup.data.utils import get_copick_tomogram
 from collections import defaultdict
 import zarr
 

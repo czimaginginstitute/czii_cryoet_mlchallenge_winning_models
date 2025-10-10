@@ -9,7 +9,7 @@ import pandas as pd
 #from scipy.spatial import cKDTree
 from scipy.spatial import KDTree
 from tqdm import tqdm
-from czii_cryoet_models.postprocess.utils import get_final_submission
+from topcup.postprocess.utils import get_final_submission
 
 
 class ParticipantVisibleError(Exception):
