@@ -1,6 +1,4 @@
 import torch
-from torch import nn
-from torch.distributions import Beta
 
 
 def count_parameters(model):

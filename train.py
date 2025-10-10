@@ -13,8 +13,6 @@ from topcup.data.utils import worker_init_fn, collate_fn, train_collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
 from topcup.data.copick_dataset import CopickDataset, TrainDataset
 from topcup.data.augmentation import train_aug, get_basic_transform_list
-from topcup.postprocess.constants import ANGSTROMS_IN_PIXEL, CLASS_INDEX_TO_CLASS_NAME, TARGET_SIGMAS
-
 
 
 def get_args():
