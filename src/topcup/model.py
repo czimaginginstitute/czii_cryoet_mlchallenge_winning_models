@@ -7,13 +7,14 @@ import copy
 import pandas as pd
 from pathlib import Path
 from topcup.modules.unet import FlexibleUNet
-from topcup.modules.utils import (
-    to_ce_target,
-)
+from topcup.modules.utils import to_ce_target
 from topcup.loss.dense_cross_entropy import DenseCrossEntropy
 from topcup.data.augmentation import Mixup
 from topcup.utils.ema import ModelEMA
-from topcup.postprocess.simple_pp import postprocess_pipeline_val, postprocess_pipeline_inference
+from topcup.postprocess.simple_pp import (
+    postprocess_pipeline_val, 
+    postprocess_pipeline_inference
+)
 from topcup.postprocess.metric import calc_metric
 from topcup.postprocess.utils import (
     sliding_window,

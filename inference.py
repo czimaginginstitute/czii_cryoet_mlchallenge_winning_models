@@ -1,10 +1,10 @@
 import torch
 from torch.utils.data import DataLoader
-from czii_cryoet_models.model import SegNet
-from czii_cryoet_models.data.utils import worker_init_fn, collate_fn
+from topcup.model import SegNet
+from topcup.data.utils import worker_init_fn, collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
-from czii_cryoet_models.data.copick_dataset import CopickDataset
-from czii_cryoet_models.data.augmentation import get_basic_transform_list
+from topcup.data.copick_dataset import CopickDataset
+from topcup.data.augmentation import get_basic_transform_list
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 import monai
