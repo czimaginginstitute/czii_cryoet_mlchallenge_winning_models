@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "czii_cryoet_models"
+name = "topcup"
 version = "1.0.1"
 description = "A training and inference codes of the 2024-2025 CZII ML Challenge winning models."
 authors = [
@@ -33,7 +33,7 @@ dependencies = [
 Homepage = "https://github.com/czimaginginstitute/czii_cryoet_challenge_models"
 
 [tool.setuptools]
-packages = ["czii_cryoet_models"]
+packages = ["topcup"]
 
 [tool.setuptools.package-dir]
 "" = "src"
