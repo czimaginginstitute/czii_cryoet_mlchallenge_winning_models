@@ -11,7 +11,11 @@ We are able to train 3 models (resnet34 backbones) with 6, 12, and 24 tomograms 
 
 
 ## Installation
-cd into the root folder, then 
+```
+pip install git+https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models.git
+```
+
+Or cd into the root folder, then 
 ```
 pip install -e .
 ```
@@ -120,11 +124,28 @@ An example of copick config file is shown below:
 }
 ```
 
-
-## Training from scratch
-The code support loading data via copick and directly loading zarr data. An example training command is below.
+## Commands
+After installation, use the command `topcup --help` to show all the possible subcomamnds:
 ```
-python train.py \
+Usage: topcup [OPTIONS] COMMAND [ARGS]...
+
+  topcup: a top crypet u-net picker
+
+Options:
+  -v, --verbose  Increase verbosity (-v, -vv).
+  --version      Show the version and exit.
+  -h, --help     Show this message and exit.
+
+Commands:
+  inference
+  train
+  score
+```
+
+### Training from scratch
+Use `topcup train --help` to see all the options for training. The code support loading data via copick. An example training command is below.
+```
+topcup train \
     --copick_config COPICK_CONFIG_FILE \
     --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
     --val_run_names TS_5_4 \
@@ -138,9 +159,9 @@ python train.py \
     --epochs 100   
 ```
 
-## Re-training from a checkpoint for the same dataset
+### Re-training from a checkpoint for the same dataset
 ```
-python train.py \
+topcup train \
     --copick_config COPICK_CONFIG_FILE \
     --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
     --val_run_names TS_5_4  \
@@ -206,11 +227,11 @@ Class details:
 ```
 
 
-## Inference
-An example command for inference with PyTorch checkpoints (a single checkpoint file path or multiple folder paths, each containing mutiple checkpoints) that supports pattern matching. 
+### Inference
+Use command `topcup inference --help` to see all the options for the inference pipeline. An example command for inference with PyTorch checkpoints (a single checkpoint file path or multiple folder paths, each containing mutiple checkpoints) that supports pattern matching. 
 
 ```
-python inference.py \
+topcup inference \
     --copick_config copick_config.json \
     --run_names TS_100_4,TS_100_6,TS_100_7,TS_100_9 \
     --pretrained_weights FOLDER_PATH1/checkpoints/,FOLDER_PATH2/checkpoints/,FOLDER_PATH3/checkpoints/ \
@@ -219,15 +240,16 @@ python inference.py \
     --pattern *v1.ckpt 
 ```
 
-Inference by loading zarr files:
+### Score calculation
+Use command 'topcup score --help' to see all the options for calculating F-beta score for the predictions:
 ```
-python inference_custom.py \
-    --file_path FOLDER_PATH_TO_ZARR_FILES \
-    --pretrained_weights FOLDER_PATH1/checkpoints/,FOLDER_PATH2/checkpoints/,FOLDER_PATH3/checkpoints/ \
-    --batch_size 16 \
-    --output_dir OUTPUT_PATH \
-    --pixelsize PIXEL_SIZE \
-    --pattern *v1.ckpt 
+Usage: topcup score [OPTIONS]
+
+Options:
+  -c, --copick_config FILE  copick config file path  [required]
+  -g, --gt FILE             Ground truth picks csv file path  [required]
+  -s, --submission FILE     Submission picks csv file path  [required]
+  -h, --help                Show this message and exit.
 ```
 
 

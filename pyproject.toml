@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "topcup"
 version = "1.0.1"
-description = "A training and inference codes of the 2024-2025 CZII ML Challenge winning models."
+description = "An implementation of 2024-2025 Kaggle/CZI cryoET ML challenge winning models"
 authors = [
     { name="Zhuowen Zhao", email="kevin.zhao@czii.org" },
     { name="Christof Henkel", email="chenkel@nvidia.com" },
@@ -14,7 +14,6 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "kaggle",
   "copick",
   "scikit-learn",
   "zarr==2.18.2",
@@ -31,6 +30,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/czimaginginstitute/czii_cryoet_challenge_models"
+
+[project.scripts]
+topcup = "topcup.cli.cli:cli"
 
 [tool.setuptools]
 packages = ["topcup"]

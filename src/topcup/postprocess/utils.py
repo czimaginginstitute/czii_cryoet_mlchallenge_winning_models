@@ -120,8 +120,10 @@ def get_final_submission(
         output_dir: str=''
     ) -> pd.DataFrame:
     submission_pp = []
+    print(f'submission\n{submission}')
     for p, th in score_thresholds.items():
         submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
+    
     submission_pp = pd.concat(submission_pp)
     submission_pp = submission_pp.sort_values(by='experiment')
     submission_pp = submission_pp.drop_duplicates(subset=['experiment', 'x', 'y', 'z'])  # by default, keep first
@@ -151,7 +153,8 @@ def sliding_window(
     batch_slices = np.array_split(slices, n_batches)
     out_slices = np.array_split(get_new_slices(slices, z_scale), n_batches)
 
-    out_shape = (torch.tensor(image_size) * torch.tensor()).long().tolist()
+    # out_shape = (torch.tensor(image_size) * torch.tensor()).long().tolist()
+    out_shape = torch.as_tensor(image_size, dtype=torch.long).tolist()
     out_preds = torch.zeros((C, *out_shape), dtype=inputs.dtype, device=inputs.device)
     out_counts = torch.zeros((C, *out_shape), dtype=torch.int8, device=inputs.device)
     out_loss = 0
@@ -173,7 +176,8 @@ def sliding_window(
         out_preds /= out_counts
         if out_loss_count > 0:
             out_loss /= out_loss_count
-
+    
+    print(f'out_preds\n{out_preds}')
     return out_preds, out_loss
 
 
