@@ -163,9 +163,6 @@ class SegNet(pl.LightningModule):
             self.log('skipped_train_batches', 1, on_step=False, on_epoch=True, reduce_fx=torch.sum)
             return None # Return None to skip this batch in Lightning's training loop
         
-        if batch_idx == 0:
-            print("Input batch shape:", tuple(batch["input"].shape))
-        
         out = self(batch["input"], batch["target"])
         self.log("train_loss", out["loss"], on_step=True, on_epoch=True, prog_bar=True)
         self.train_losses.append(out["loss"].item())
