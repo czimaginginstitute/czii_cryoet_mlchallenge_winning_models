@@ -1,18 +1,22 @@
 import click
+import numpy as np
+import pandas as pd
+from time import time
+from pathlib import Path
+
+import monai
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
 from torch.utils.data import DataLoader
-import numpy as np
-from pathlib import Path
-import monai
 from torch.utils.data import DataLoader
 from topcup.model import SegNet
 from topcup.data.utils import worker_init_fn, collate_fn, train_collate_fn
 from copick.impl.filesystem import CopickRootFSSpec
 from topcup.data.copick_dataset import CopickDataset, TrainDataset
 from topcup.data.augmentation import train_aug, get_basic_transform_list
+from topcup.postprocess.metric import score
 
 
 
@@ -434,7 +438,49 @@ def inference(
 
 
 
+@click.command(name="score")
+@click.option(
+    "-c", "--copick_config",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),  
+    help="copick config file path")
+@click.option(
+    "--gt", "-g", 
+    type=click.Path(exists=True, dir_okay=False, path_type=str), 
+    required=True, 
+    help="Ground truth picks csv file path"
+)
+@click.option(
+    "--submission", "-s", 
+    type=click.Path(exists=True, dir_okay=False, path_type=str), 
+    required=True, 
+    help="Submission picks csv file path"
+)
+@click.pass_context
+def calculate_score(
+        ctx,
+        copick_config,
+        gt,
+        submission
+):
+    copick_root = CopickRootFSSpec.from_file(copick_config)
 
+    submission= pd.read_csv(submission)#.drop(columns=["score"])
+    val_df = pd.read_csv(gt)
+    val_df = val_df[val_df['experiment'].isin(submission['experiment'].unique())].copy()
+    val_df['id'] = range(len(val_df))
+
+    start = time.time()
+    sc = score(
+        val_df.copy(),
+        submission.copy(),
+        row_id_column_name = 'id',
+        distance_multiplier=0.5,
+        particle_radius={p.name:p.radius for p in copick_root.pickable_objects},
+        particle_weights={p.name:p.metadata['score_weight'] for p in copick_root.pickable_objects},
+        beta=4)
+    
+    print('all', sc)
+    print(f'The score calculation takes {time.time()-start} s to finish.')
 
 
 

@@ -1,6 +1,6 @@
 import click
 from topcup.cli.log import setup_logging
-from topcup.cli.main import train, inference
+from topcup.cli.main import train, inference, calculate_score
 
 
 click.MAX_WIDTH = 120
@@ -37,6 +37,7 @@ def cli(ctx, verbose):
 # Register subcommands
 cli.add_command(train)
 cli.add_command(inference)
+cli.add_command(calculate_score)
 
 
 
