@@ -156,19 +156,22 @@ class InferenceDataModule(pl.LightningDataModule):
 @click.command(name="train")
 @click.option(
     "-c", "--copick_config",
-    type=click.Path(exists=True, dir_okay=False, path_type=str), 
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    required=True,  
     help="copick config file path"
 )
 @click.option(
     "-tts", "--train_run_names", 
     type=str, 
-    default="", 
+    default="",
+    required=True,  
     help="Tomogram dataset run names for training",
 )
 @click.option(
     "-vts", "--val_run_names", 
     type=str, 
-    default="", 
+    default="",
+    required=True,  
     help="Tomogram dataset run names for validation"
 )
 @click.option(
@@ -334,7 +337,8 @@ def train(
 @click.command(name="inference")
 @click.option(
     "-c", "--copick_config",
-    type=click.Path(exists=True, dir_okay=False, path_type=str),  
+    type=click.Path(exists=True, dir_okay=False, path_type=str), 
+    required=True,  
     help="copick config file path")
 @click.option(
     "-ts", "--run_names", 
@@ -441,7 +445,8 @@ def inference(
 @click.command(name="score")
 @click.option(
     "-c", "--copick_config",
-    type=click.Path(exists=True, dir_okay=False, path_type=str),  
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    required=True,   
     help="copick config file path")
 @click.option(
     "--gt", "-g", 
