@@ -234,10 +234,10 @@ class InferenceDataModule(pl.LightningDataModule):
     help="output dir for saving checkpoints"
 )
 @click.option(
-    "-j", "--job_id", 
-    type=str, 
-    default="job_0", 
-    help="Unique id for each run"
+    "-j", "--logger_version", 
+    type=int, 
+    default=None, 
+    help="PyTorch-Lightning logger version. If not set, logs and outputs will increment to the next version."
 )
 @click.pass_context
 def train(
@@ -255,8 +255,16 @@ def train(
     epochs,
     pixelsize,
     output_dir,
-    job_id
+    logger_version
 ):
+    logger = CSVLogger(
+        save_dir=f"{output_dir}/logs/", 
+        name="training_logs",
+        version=logger_version
+    )
+    print(f'logger version {logger.version}')     
+    print(f'logger log_dir {logger.log_dir}')  
+    
     copick_root = CopickRootFSSpec.from_file(copick_config)
     copick_pickable_objects = []
     for obj in copick_root.pickable_objects:
@@ -265,7 +273,7 @@ def train(
                 copick_pickable_objects.append(obj)
             else:
                 print(f'Skipping {obj.name} in data loading becuase it does not have a radius in the copick configuration file.')
-    
+
     data_module = DataModule(
         copick_root=copick_root, 
         train_run_names=train_run_names.split(','), 
@@ -277,7 +285,7 @@ def train(
         session_id=session_id,
         n_aug=n_aug
     )
-    output_dir = Path(f'{output_dir}/jobs/{job_id}')
+    output_dir = Path(f'{output_dir}/jobs/{logger.version}')
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f'making output dir {str(output_dir)}')
 
@@ -302,7 +310,7 @@ def train(
             particle_radius = {p.name:p.radius for p in copick_pickable_objects},
             particle_weights = {p.name:p.metadata['score_weight'] for p in copick_pickable_objects},
             score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_pickable_objects},
-            output_dir = f'{output_dir}/jobs/{job_id}'
+            output_dir = f'{output_dir}/jobs/{logger.version}'
         )
 
     # Define Checkpoint Callback
@@ -314,8 +322,6 @@ def train(
         filename="best_model"
     )
 
-    # Logger
-    logger = CSVLogger(save_dir=f"{output_dir}/logs/", name="training_logs")
 
     # Trainer
     trainer = pl.Trainer(
