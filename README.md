@@ -176,7 +176,7 @@ topcup train \
     --pretrained_weight CHECKPOINT_PATH   
 ```
 
-## *Subset transfer learning: re-training from a checkpoint for a different dataset 
+### *Subset transfer learning: re-training from a checkpoint for a different dataset 
 **Subset transfer learning** involves loading a checkpoint from a pretrained model and fine-tuning it on a new dataset that includes only a subset of the original classes. To do this correctly, it’s important to know which classes and the corresponding `channel_id` the original model was trained on. This information can be accessed by loading the checkpoint and inspecting the `model.description` attribute. The `copick_config` used for fine-tuning should include the same pickable objects as the original training setup, with updated class weights and thresholds as needed for the new task.
 
 ```
