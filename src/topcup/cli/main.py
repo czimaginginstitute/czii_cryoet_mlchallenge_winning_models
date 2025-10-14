@@ -6,6 +6,7 @@ from pathlib import Path
 
 import monai
 import torch
+import copick
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
@@ -13,7 +14,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data import DataLoader
 from topcup.model import SegNet
 from topcup.data.utils import worker_init_fn, collate_fn, train_collate_fn
-from copick.impl.filesystem import CopickRootFSSpec
 from topcup.data.copick_dataset import CopickDataset, TrainDataset
 from topcup.data.augmentation import train_aug, get_basic_transform_list
 from topcup.postprocess.metric import score
@@ -265,7 +265,7 @@ def train(
     print(f'logger version {logger.version}')     
     print(f'logger log_dir {logger.log_dir}')  
     
-    copick_root = CopickRootFSSpec.from_file(copick_config)
+    copick_root = copick.from_file(copick_config)
     copick_pickable_objects = []
     for obj in copick_root.pickable_objects:
         if obj.is_particle:
@@ -421,7 +421,7 @@ def inference(
     gpus,
     has_ground_truth
 ):
-    copick_root = CopickRootFSSpec.from_file(copick_config)
+    copick_root = copick.from_file(copick_config)
     data_module = InferenceDataModule(
         copick_root=copick_root, 
         run_names=run_names.split(','), 
@@ -473,7 +473,7 @@ def calculate_score(
         gt,
         submission
 ):
-    copick_root = CopickRootFSSpec.from_file(copick_config)
+    copick_root = copick.from_file(copick_config)
 
     submission= pd.read_csv(submission)#.drop(columns=["score"])
     val_df = pd.read_csv(gt)
