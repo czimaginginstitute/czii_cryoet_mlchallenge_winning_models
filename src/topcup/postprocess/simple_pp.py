@@ -1,8 +1,7 @@
-import pandas as pd
 import torch
+import pandas as pd
 import numpy as np
 from collections import defaultdict
-
 
 
 def simple_nms(scores, nms_radius: int):
