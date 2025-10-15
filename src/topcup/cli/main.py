@@ -19,7 +19,6 @@ from topcup.data.augmentation import train_aug, get_basic_transform_list
 from topcup.postprocess.metric import score
 
 
-
 class DataModule(pl.LightningDataModule):
     def __init__(
             self, 
@@ -76,7 +75,7 @@ class DataModule(pl.LightningDataModule):
             num_workers=4,  # should not be too many
             pin_memory=False,
             collate_fn=train_collate_fn,
-            drop_last= True,
+            drop_last= True,  # stable training
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
             persistent_workers=True,
@@ -93,7 +92,7 @@ class DataModule(pl.LightningDataModule):
             num_workers=4, 
             pin_memory=False,
             collate_fn=collate_fn,
-            drop_last= True,
+            drop_last= False, # use all available dataset for validation
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
             persistent_workers=True,
@@ -143,7 +142,7 @@ class InferenceDataModule(pl.LightningDataModule):
             num_workers=self.batch_size,  # one worker per batch
             pin_memory=False,
             collate_fn=collate_fn,
-            drop_last= True,
+            drop_last= False, # all inference dataset
             worker_init_fn=worker_init_fn,
             prefetch_factor=2,
             persistent_workers=True,
@@ -234,7 +233,7 @@ class InferenceDataModule(pl.LightningDataModule):
     help="output dir for saving checkpoints"
 )
 @click.option(
-    "-j", "--logger_version", 
+    "-v", "--logger_version", 
     type=int, 
     default=None, 
     help="PyTorch-Lightning logger version. If not set, logs and outputs will increment to the next version."
@@ -276,8 +275,8 @@ def train(
 
     data_module = DataModule(
         copick_root=copick_root, 
-        train_run_names=train_run_names.split(','), 
-        val_run_names=val_run_names.split(','), 
+        train_run_names=[s for s in train_run_names.split(',') if s], 
+        val_run_names=[s for s in val_run_names.split(',') if s], 
         batch_size=batch_size, 
         pixelsize=pixelsize,
         recon_type=reconstruction_type,
@@ -285,9 +284,9 @@ def train(
         session_id=session_id,
         n_aug=n_aug
     )
-    output_dir = Path(f'{output_dir}/jobs/{logger.version}')
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f'making output dir {str(output_dir)}')
+    out_dir = Path(f'{output_dir}/jobs/{logger.version}')
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f'making output dir {str(out_dir)}')
 
 
     if pretrained_weight:
@@ -310,7 +309,7 @@ def train(
             particle_radius = {p.name:p.radius for p in copick_pickable_objects},
             particle_weights = {p.name:p.metadata['score_weight'] for p in copick_pickable_objects},
             score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_pickable_objects},
-            output_dir = f'{output_dir}/jobs/{logger.version}'
+            output_dir = out_dir
         )
 
     # Define Checkpoint Callback
@@ -319,21 +318,24 @@ def train(
         mode="max",
         save_top_k=1,
         dirpath=f"{output_dir}/checkpoints/",
-        filename="best_model"
+        filename="best_model",
+        save_on_train_epoch_end=False,
     )
-
+    print("Checkpoint dir:", checkpoint_callback.dirpath)
 
     # Trainer
     trainer = pl.Trainer(
         max_epochs=epochs,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=1,
-        log_every_n_steps=2,
+        log_every_n_steps=1,
         callbacks=[checkpoint_callback],
         logger=logger,
+        check_val_every_n_epoch=1,
+        limit_val_batches=1.0,
         num_sanity_val_steps=0,
-    )
-
+    ) 
+    
     # Train Model
     trainer.fit(model, data_module)
 

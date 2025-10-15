@@ -1,21 +1,23 @@
+import json
+import copy
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-import numpy as np
-import json
-import copy
-import pandas as pd
-from pathlib import Path
+
 from topcup.modules.unet import FlexibleUNet
 from topcup.modules.utils import to_ce_target
 from topcup.loss.dense_cross_entropy import DenseCrossEntropy
 from topcup.data.augmentation import Mixup
 from topcup.utils.ema import ModelEMA
+from topcup.postprocess.metric import calc_metric
 from topcup.postprocess.simple_pp import (
     postprocess_pipeline_val, 
     postprocess_pipeline_inference
 )
-from topcup.postprocess.metric import calc_metric
 from topcup.postprocess.utils import (
     sliding_window,
     get_final_submission 
@@ -301,4 +303,3 @@ class SegNet(pl.LightningModule):
         optimizer = get_optimizer(self, self.learning_rate)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
-

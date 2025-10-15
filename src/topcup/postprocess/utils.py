@@ -1,10 +1,11 @@
-import numpy as np
 import einops
+import numpy as np
+import pandas as pd
+
 import torch
 from torch import Tensor
 from monai.data.utils import dense_patch_slices
 from monai.inferers.utils import _get_scan_interval
-import pandas as pd
 
 from typing import List, Tuple, Union, Any, Iterable, Optional
 
@@ -153,8 +154,7 @@ def sliding_window(
     batch_slices = np.array_split(slices, n_batches)
     out_slices = np.array_split(get_new_slices(slices, z_scale), n_batches)
 
-    # out_shape = (torch.tensor(image_size) * torch.tensor()).long().tolist()
-    out_shape = torch.as_tensor(image_size, dtype=torch.long).tolist()
+    out_shape = (torch.tensor(image_size) * torch.tensor(z_scale)).long().tolist()
     out_preds = torch.zeros((C, *out_shape), dtype=inputs.dtype, device=inputs.device)
     out_counts = torch.zeros((C, *out_shape), dtype=torch.int8, device=inputs.device)
     out_loss = 0
@@ -177,8 +177,9 @@ def sliding_window(
         if out_loss_count > 0:
             out_loss /= out_loss_count
     
-    print(f'out_preds\n{out_preds}')
     return out_preds, out_loss
+
+
 
 
 def decode_detections_with_nms(

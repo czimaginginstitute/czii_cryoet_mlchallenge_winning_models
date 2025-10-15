@@ -1,8 +1,7 @@
 import numpy as np
-import torch
-from torch.utils.data import Dataset
 import zarr
 from pathlib import Path
+from torch.utils.data import Dataset
 
 
 class CustomDataset(Dataset):
