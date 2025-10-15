@@ -149,13 +149,13 @@ topcup train \
     --copick_config COPICK_CONFIG_FILE \
     --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
     --val_run_names TS_5_4 \
-    --reconstruction_type denoised \
+    --tomo_type denoised \
     --user_id COPICK_USER_ID \
     --pixelsize 10 \  
     --batch_size 16 \
     --n_aug 1112 \
     --output_dir OUTPUT_PATH \
-    --job_id job_1 \
+    --logger_version 1 \
     --epochs 100   
 ```
 
@@ -165,13 +165,13 @@ topcup train \
     --copick_config COPICK_CONFIG_FILE \
     --train_run_names TS_6_4,TS_6_6,TS_69_2,TS_73_6,TS_86_3,TS_99_9 \
     --val_run_names TS_5_4  \
-    --reconstruction_type denoised \
+    --tomo_type denoised \
     --user_id COPICK_USER_ID \
     --pixelsize 10 \  
     --batch_size 16 \
     --n_aug 1112 \
     --output_dir OUTPUT_PATH \
-    --job_id job_1 \
+    --logger_version 1 \
     --epochs 100 \
     --pretrained_weight CHECKPOINT_PATH   
 ```
@@ -234,6 +234,8 @@ Use command `topcup inference --help` to see all the options for the inference p
 topcup inference \
     --copick_config copick_config.json \
     --run_names TS_100_4,TS_100_6,TS_100_7,TS_100_9 \
+    --tomo_type denoised \
+    --user_id COPICK_USER_ID \
     --pretrained_weights FOLDER_PATH1/checkpoints/,FOLDER_PATH2/checkpoints/,FOLDER_PATH3/checkpoints/ \
     --batch_size 16 \
     --output_dir OUTPUT_PATH \
