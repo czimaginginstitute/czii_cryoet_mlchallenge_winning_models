@@ -66,7 +66,7 @@ class DataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self):
-        print(f'train_dataset {len(self.train_dataset)}')
+        print(f'train_dataset length: {len(self.train_dataset)}')
         train_dataloader = DataLoader(
             self.train_dataset,   # 1112*4
             #sampler=sampler,
@@ -83,7 +83,7 @@ class DataModule(pl.LightningDataModule):
         return train_dataloader
 
     def val_dataloader(self):
-        print(f'val_dataset {len(self.val_dataset)}')
+        print(f'val_dataset length: {len(self.val_dataset)}')
         val_dataloader = DataLoader(
             self.val_dataset,   # 1112*4
             #sampler=sampler,
@@ -133,7 +133,7 @@ class InferenceDataModule(pl.LightningDataModule):
         )
 
     def predict_dataloader(self):
-        print(f'self.inference_dataset {len(self.predict_dataset)}')
+        print(f'Inference_dataset length: {len(self.predict_dataset)}')
         predict_dataloader = DataLoader(
             self.predict_dataset,   # 1112*4
             #sampler=sampler,
@@ -174,10 +174,10 @@ class InferenceDataModule(pl.LightningDataModule):
     help="Tomogram dataset run names for validation"
 )
 @click.option(
-    "-rt", "--reconstruction_type", 
+    "-tt", "--tomo_type", 
     type=str, 
     default="denoised", 
-    help="Tomogram reconstruction type. Default is denoised."
+    help="Tomogram type. Default is denoised."
 )
 @click.option(
     "-u", "--user_id", 
@@ -244,7 +244,7 @@ def train(
     copick_config,
     train_run_names,
     val_run_names,
-    reconstruction_type,
+    tomo_type,
     user_id,
     session_id,
     batch_size,
@@ -279,7 +279,7 @@ def train(
         val_run_names=[s for s in val_run_names.split(',') if s], 
         batch_size=batch_size, 
         pixelsize=pixelsize,
-        recon_type=reconstruction_type,
+        recon_type=tomo_type,
         user_id=user_id,
         session_id=session_id,
         n_aug=n_aug
@@ -379,10 +379,10 @@ def train(
     help="Pixelsize in angstrom. Default is 10.0A."
 )
 @click.option(
-    "-rt", "--reconstruction_type", 
+    "-tt", "--tomo_type", 
     type=str, 
     default="denoised", 
-    help="Tomogram reconstruction type. Default is denoised."
+    help="Tomogram type. Default is denoised."
 )
 @click.option(
     "-u", "--user_id", 
@@ -417,7 +417,7 @@ def inference(
     pretrained_weights,
     pattern,
     pixelsize,
-    reconstruction_type,
+    tomo_type,
     user_id,
     output_dir,
     gpus,
@@ -429,7 +429,7 @@ def inference(
         run_names=run_names.split(','), 
         batch_size=batch_size, 
         pixelsize=pixelsize, 
-        recon_type=reconstruction_type,
+        recon_type=tomo_type,
         user_id = user_id, 
         has_ground_truth=has_ground_truth
     )

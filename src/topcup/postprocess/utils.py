@@ -121,7 +121,7 @@ def get_final_submission(
         output_dir: str=''
     ) -> pd.DataFrame:
     submission_pp = []
-    print(f'submission\n{submission}')
+    #print(f'submission\n{submission}')
     for p, th in score_thresholds.items():
         submission_pp += [submission[(submission['particle_type']==p) & (submission['conf']>th)].copy()]
     
