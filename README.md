@@ -118,7 +118,7 @@ An example of copick config file is shown below:
             }
         }
     ],
-    "config_type": "czii cryoet mlchallenge dataset",
+    "config_type": "filesystem",
     "overlay_root": "local:///PATH/TO/EXTRACTED/PROJECT/",
     "static_root": "local:///PATH/TO/EXTRACTED/PROJECT/"
 }
