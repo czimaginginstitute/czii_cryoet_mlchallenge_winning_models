@@ -72,7 +72,7 @@ class DataModule(pl.LightningDataModule):
             #sampler=sampler,
             #shuffle=(sampler is None),
             batch_size=self.batch_size, #self.batch_size,  # 8
-            num_workers=4,  # should not be too many
+            num_workers=2,  # should not be too many
             pin_memory=False,
             collate_fn=train_collate_fn,
             drop_last= True,  # stable training
@@ -89,7 +89,7 @@ class DataModule(pl.LightningDataModule):
             #sampler=sampler,
             #shuffle=(sampler is None),
             batch_size=self.batch_size, 
-            num_workers=4, 
+            num_workers=2, 
             pin_memory=False,
             collate_fn=collate_fn,
             drop_last= False, # use all available dataset for validation
@@ -444,7 +444,7 @@ def inference(
     ensemble_model.score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_root.pickable_objects}
 
     # Initialize trainer
-    trainer = pl.Trainer(devices=1, accelerator="gpu") if gpus == 1 else pl.Trainer(devices=gpus, accelerator="gpu", strategy="ddp")
+    trainer = pl.Trainer(accelerator="auto", devices="auto", strategy="ddp" if gpus > 1 else None)
     trainer.predict(ensemble_model, datamodule=data_module)
 
 
