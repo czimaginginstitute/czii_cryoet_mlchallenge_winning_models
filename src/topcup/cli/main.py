@@ -443,8 +443,13 @@ def inference(
     ensemble_model.output_dir = output_dir
     ensemble_model.score_thresholds = {p.name:p.metadata['score_threshold'] for p in copick_root.pickable_objects}
 
-    # Initialize trainer
-    trainer = pl.Trainer(accelerator="auto", devices="auto", strategy="ddp" if gpus > 1 else None)
+    if torch.cuda.is_available() and gpus > 1:
+        trainer = pl.Trainer(accelerator="gpu", devices=gpus, strategy="ddp")
+    elif torch.cuda.is_available() and gpus == 1:
+        trainer = pl.Trainer(accelerator="gpu", devices=1)  
+    else:
+        trainer = pl.Trainer(accelerator="cpu", devices=1)  
+
     trainer.predict(ensemble_model, datamodule=data_module)
 
 
