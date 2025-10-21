@@ -20,6 +20,11 @@ Or cd into the root folder, then
 pip install -e .
 ```
 
+## Quickstart
+[Quickstart notebook](https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models/blob/main/notebooks/Quickstart_TopCUP.ipynb)
+[Training notebook](https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models/blob/main/notebooks/Tutorial_training_TopCUP.ipynb)
+
+
 ## Copick configuration file
 The copick data ingestion can automatically populate many important internal variables from the config file. Especially, the metrics for the training and evaluation process, such as `class_loss_weight`, `score_threshold`, and `score_weight` are stored under the metadata key in the configuration file. 
 
