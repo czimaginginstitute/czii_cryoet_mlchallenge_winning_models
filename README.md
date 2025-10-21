@@ -20,9 +20,10 @@ Or cd into the root folder, then
 pip install -e .
 ```
 
-## Quickstart
-[Quickstart notebook](https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models/blob/main/notebooks/Quickstart_TopCUP.ipynb)
-[Training notebook](https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models/blob/main/notebooks/Tutorial_training_TopCUP.ipynb)
+## 🚀 Quickstart  
+You can explore and train TopCUP models using the provided example notebooks:  
+- [Quickstart notebook](https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models/blob/main/notebooks/Quickstart_TopCUP.ipynb): Run inference with pretrained TopCUP models.  
+- [Training notebook](https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models/blob/main/notebooks/Tutorial_training_TopCUP.ipynb): Learn how to train or fine-tune a TopCUP model using your own tomograms.  
 
 
 ## Copick configuration file
