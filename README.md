@@ -1,4 +1,4 @@
-#  TopCUP: Top CryoET U-Net Picker
+#  TopCUP: Top CryoET U-Net Picker 🏆🏆🏆
 The re-implementation of 1st winning team's solution [kaggle-cryoet-1st-place-segmentation](https://github.com/ChristofHenkel/kaggle-cryoet-1st-place-segmentation/tree/main) in pytorch-lightning and copick.
 
 
