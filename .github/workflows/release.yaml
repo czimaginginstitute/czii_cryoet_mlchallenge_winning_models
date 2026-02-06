@@ -1,10 +1,9 @@
 # .github/workflows/release.yml
-name: Release (PyPI + GitHub Release + Zenodo DOI)
+name: Release (PyPI + GitHub Release + Zenodo)
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -13,17 +12,18 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Build and validate package
+      - name: Build & validate
         run: |
-          python -m pip install -U pip build twine
+          python -m pip install --upgrade pip build twine
           python -m build
           python -m twine check dist/*
 
@@ -46,17 +46,20 @@ jobs:
         shell: bash
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-          ZENODO_SANDBOX: "false" # set to "true" for sandbox.zenodo.org
+          ZENODO_SANDBOX: "false" # set to "true" to use sandbox.zenodo.org
         run: |
           set -euo pipefail
 
           API="https://zenodo.org/api"
-          if [[ "$ZENODO_SANDBOX" == "true" ]]; then
+          if [[ "${ZENODO_SANDBOX}" == "true" ]]; then
             API="https://sandbox.zenodo.org/api"
           fi
-          echo "Using Zenodo API: $API"
 
-          # Ensure metadata file exists
+          # sanity checks
+          if [[ -z "${ZENODO_ACCESS_TOKEN:-}" ]]; then
+            echo "ERROR: ZENODO_API_TOKEN secret is missing"
+            exit 1
+          fi
           if [[ ! -f .zenodo.json ]]; then
             echo "ERROR: .zenodo.json not found at repo root"
             exit 1
@@ -70,16 +73,23 @@ jobs:
 
           DEP_ID=$(python -c 'import json; print(json.load(open("deposition.json"))["id"])')
           BUCKET=$(python -c 'import json; print(json.load(open("deposition.json"))["links"]["bucket"])')
-          echo "Created Zenodo deposition $DEP_ID"
+          echo "Zenodo deposition id: $DEP_ID"
 
-          # Upload metadata from .zenodo.json
+          # Upload metadata from repo root .zenodo.json
           curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
             -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d @.zenodo.json >/dev/null
 
-          # Upload artifacts
-          for f in dist/*; do
+          # Upload artifacts (require at least one file in dist/)
+          shopt -s nullglob
+          files=(dist/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "ERROR: no files found in dist/ to upload"
+            exit 1
+          fi
+
+          for f in "${files[@]}"; do
             echo "Uploading $(basename "$f")"
             curl -fsS -X PUT "$BUCKET/$(basename "$f")" \
               -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
