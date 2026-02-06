@@ -7,7 +7,7 @@ name = "topcup"
 version = "1.0.1"
 description = "An implementation of 2024-2025 Kaggle/CZI cryoET ML challenge winning models"
 authors = [
-    { name="Zhuowen Zhao", email="kevin.zhao@czii.org" },
+    { name="Zhuowen Zhao", email="kevin.zhao@biohub.org" },
     { name="Christof Henkel", email="chenkel@nvidia.com" },
     { name="Eugene Khvedchenya", email="ekhvedchenia@nvidia.com" }, 
 ]
