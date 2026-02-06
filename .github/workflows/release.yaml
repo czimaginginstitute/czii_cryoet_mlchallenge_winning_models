@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -16,6 +14,7 @@ jobs:
   test-build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
@@ -29,10 +28,10 @@ jobs:
       - name: Build check
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build
+          python -m pip install --upgrade build
           python -m build
 
-  # 2) Build once + publish to PyPI
+  # 2) Build once + publish to PyPI + upload to Zenodo (tagged releases only)
   publish:
     needs: test-build
     runs-on: ubuntu-latest
@@ -45,47 +44,37 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build (publish artifacts)
+      - name: Build distributions
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build twine
+          python -m pip install --upgrade build twine
           python -m build
+          ls -la dist
 
-      - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Validate distributions (twine check)
         run: |
-          twine upload dist/*
+          python -m twine check dist/*
 
-      - name: Upload built wheels
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.python-version }}
-          path: wheelhouse/
-
-      - name: Validate wheel with twine
-        run: |
-          python3 -m pip install --upgrade twine
-          twine check wheelhouse/*
+          name: dist
+          path: dist/*
 
       - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          python -m pip install --upgrade twine
-          twine upload wheelhouse/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      
+        run: |
+          python -m twine upload dist/*
+
       - name: Upload to Zenodo
         uses: zenodraft/action@0.13.3
-
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
         with:
-          # Replace with your Zenodo Deposition ID to create a new version
-          # Leave blank/omit to create a brand-new DOI record
-          collection: 'your-deposition-id' 
-          filename: 'dist/*' 
+          # If you're versioning an existing deposition, set collection to that deposition id.
+          # If you want a brand new record, remove this line entirely.
+          # collection: "your-deposition-id"
+          filename: "dist/*"
           publish: true
