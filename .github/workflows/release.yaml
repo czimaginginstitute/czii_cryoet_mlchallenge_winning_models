@@ -1,43 +1,17 @@
 # .github/workflows/release.yml
-name: Release (PyPI tag publish + upload to Zenodo)
+name: Release (PyPI + GitHub Release + Zenodo DOI)
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  # Optional: sanity-build on multiple Pythons (runs on tag pushes + manual runs)
-  test-build:
+  release:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Build check
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade build
-          python -m build
-
-  # Tag push only: build + upload to PyPI
-  publish-pypi:
-    needs: test-build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-
     steps:
       - uses: actions/checkout@v4
 
@@ -45,59 +19,50 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build distributions
+      - name: Build + check
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade build twine
+          python -m pip install -U pip build twine
           python -m build
-          ls -la dist
-
-      - name: Validate distributions (twine check)
-        run: |
           python -m twine check dist/*
 
-      - name: Publish to PyPI
+      - name: Upload to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          python -m twine upload dist/*
+        run: python -m twine upload dist/*
 
-  # Manual only: build + upload to Zenodo
-  upload-zenodo:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - name: Create GitHub Release (attach dist/*)
+        uses: softprops/action-gh-release@v2
         with:
-          python-version: "3.13"
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build distributions (for Zenodo)
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade build
-          python -m build
-          ls -la dist
-
-      - name: Build file list for Zenodo
-        id: zenodo_files
-        shell: bash
-        run: |
-          files="$(ls -1 dist/* | tr '\n' ' ' | sed 's/ *$//')"
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-
-      - name: Upload to Zenodo
-        uses: zenodraft/action@0.13.3
+      - name: Publish to Zenodo (print DOI)
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-        with:
-          filenames: ${{ steps.zenodo_files.outputs.files }}
-          publish: true
-          # Optional knobs:
-          # sandbox: true
-          # concept: "your-concept-doi-or-record-id"
-          # metadata: ".zenodo.json"
-          # verbose: true
+          ZENODO_SANDBOX: "false" # set "true" for sandbox.zenodo.org
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://zenodo.org/api"; [[ "$ZENODO_SANDBOX" == "true" ]] && API="https://sandbox.zenodo.org/api"
+
+          dep="$(curl -sS -X POST "$API/deposit/depositions" -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" -H "Content-Type: application/json" -d '{}')"
+          id="$(python -c "import json,sys; print(json.loads(sys.argv[1])['id'])" "$dep")"
+          bucket="$(python -c "import json,sys; print(json.loads(sys.argv[1])['links']['bucket'])" "$dep")"
+
+          for f in dist/*; do
+            curl -sS -X PUT "$bucket/$(basename "$f")" -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" --upload-file "$f" >/dev/null
+          done
+
+          pub="$(curl -sS -X POST "$API/deposit/depositions/$id/actions/publish" -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN")"
+          python - <<'PY'
+          import json,sys
+          j=json.loads(sys.stdin.read())
+          doi=j.get("doi") or j.get("metadata",{}).get("doi") or j.get("metadata",{}).get("prereserve_doi",{}).get("doi")
+          url=j.get("links",{}).get("html") or j.get("record_url")
+          print("Zenodo published")
+          if doi: print("DOI:", doi)
+          if url: print("Record:", url)
+          PY <<<"$pub"
