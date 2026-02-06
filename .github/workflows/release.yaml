@@ -79,7 +79,8 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       
       - name: Upload to Zenodo
-        uses: zenodraft/action@v0.13.3
+        uses: zenodraft/action@0.13.3
+
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
         with:
