@@ -1,18 +1,35 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "topcup"
-version = "1.0.1"
+version = "1.0.2"
 description = "An implementation of 2024-2025 Kaggle/CZI cryoET ML challenge winning models"
-authors = [
-    { name="Zhuowen Zhao", email="kevin.zhao@biohub.org" },
-    { name="Christof Henkel", email="chenkel@nvidia.com" },
-    { name="Eugene Khvedchenya", email="ekhvedchenia@nvidia.com" }, 
-]
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+
+authors = [
+  { name = "Zhuowen Zhao", email = "kevin.zhao@biohub.org" },
+  { name = "Christof Henkel", email = "chenkel@nvidia.com" },
+  { name = "Eugene Khvedchenya", email = "ekhvedchenia@nvidia.com" },
+]
+
+# Optional but recommended metadata
+keywords = ["cryoet", "cryo-et","particle-picking", "machine-learning", "deep-learning"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+]
+
 dependencies = [
   "copick",
   "scikit-learn",
@@ -23,21 +40,22 @@ dependencies = [
   "albumentations==1.4.21",
   "opencv-python==4.12.0.88",
   "timm==1.0.11",
-  "torch==2.4.*",
-  "torchvision==0.19.*",
-  "pytorch-lightning==2.4.*",
+  "torch>=2.4,<2.5",
+  "torchvision>=0.19,<0.20",
+  "pytorch-lightning>=2.4,<2.5",
   "monai==1.5.0",
-  "mrcfile"
+  "mrcfile",
 ]
 
 [project.urls]
 Homepage = "https://github.com/czimaginginstitute/czii_cryoet_challenge_models"
+Repository = "https://github.com/czimaginginstitute/czii_cryoet_challenge_models"
 
 [project.scripts]
 topcup = "topcup.cli.cli:cli"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
