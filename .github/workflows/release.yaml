@@ -99,6 +99,3 @@ jobs:
           # Publish deposition (mints DOI)
           curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" \
             -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" >/dev/null
-
-          # Print DOI + record URL
-          python -c 'import json; j=json.load(open("published.json")); doi=j.get("doi") or j.get("metadata",{}).get("doi") or j.get("metadata",{}).get("prereserve_doi",{}).get("doi"); url=j.get("links",{}).get("html") or j.get("record_url"); print("Zenodo published"); print("DOI:", doi) if doi else None; print("Record:", url) if url else None'

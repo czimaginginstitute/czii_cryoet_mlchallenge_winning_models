@@ -3,7 +3,7 @@
     "title": "TopCUP: Top Cryoet U-net Picker",
     "upload_type": "software",
     "description": "Winning models for the 2024–2025 CZII CryoET ML Challenge.",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "license": "MIT",
     "keywords": ["cryoet", "cryo-em", "deep-learning", "unet"],
     "creators": [
