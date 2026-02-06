@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "title": "TopCUP: Top Cryoet U-net Picker",
+    "upload_type": "software",
+    "description": "Winning models for the 2024–2025 CZII CryoET ML Challenge.",
+    "version": "1.0.7",
+    "license": "MIT",
+    "keywords": ["cryoet", "cryo-em", "deep-learning", "unet"],
+    "creators": [
+      { "name": "Zhao, Zhuowen", "affiliation": "Biohub" },
+      { "name": "Henkel, Christof", "affiliation": "NVIDIA" },
+      { "name": "Khvedchenya, Eugene", "affiliation": "NVIDIA" }
+    ]
+  }
+}

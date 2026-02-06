@@ -42,7 +42,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to Zenodo (mint DOI)
+      - name: Publish to Zenodo (uses .zenodo.json)
         shell: bash
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
@@ -56,6 +56,12 @@ jobs:
           fi
           echo "Using Zenodo API: $API"
 
+          # Ensure metadata file exists
+          if [[ ! -f .zenodo.json ]]; then
+            echo "ERROR: .zenodo.json not found at repo root"
+            exit 1
+          fi
+
           # Create deposition (draft)
           curl -fsS -X POST "$API/deposit/depositions" \
             -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
@@ -66,12 +72,11 @@ jobs:
           BUCKET=$(python -c 'import json; print(json.load(open("deposition.json"))["links"]["bucket"])')
           echo "Created Zenodo deposition $DEP_ID"
 
-          # Minimal metadata required by Zenodo to publish
+          # Upload metadata from .zenodo.json
           curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
             -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"metadata\": {\"title\": \"${GITHUB_REPOSITORY}\", \"upload_type\": \"software\", \"description\": \"Release ${GITHUB_REF_NAME}\", \"creators\": [{\"name\": \"Zhuowen Zhao\"}]}}" \
-            >/dev/null
+            -d @.zenodo.json >/dev/null
 
           # Upload artifacts
           for f in dist/*; do
@@ -83,7 +88,7 @@ jobs:
 
           # Publish deposition (mints DOI)
           curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" \
-            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" > published.json
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" >/dev/null
 
           # Print DOI + record URL
           python -c 'import json; j=json.load(open("published.json")); doi=j.get("doi") or j.get("metadata",{}).get("doi") or j.get("metadata",{}).get("prereserve_doi",{}).get("doi"); url=j.get("links",{}).get("html") or j.get("record_url"); print("Zenodo published"); print("DOI:", doi) if doi else None; print("Record:", url) if url else None'
