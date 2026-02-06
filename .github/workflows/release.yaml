@@ -3,7 +3,8 @@ name: Release (PyPI + GitHub Release + Zenodo DOI)
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -12,6 +13,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,17 +21,18 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build + check
+      - name: Build and validate package
         run: |
           python -m pip install -U pip build twine
           python -m build
           python -m twine check dist/*
 
-      - name: Upload to PyPI
+      - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload dist/*
+        run: |
+          python -m twine upload dist/*
 
       - name: Create GitHub Release (attach dist/*)
         uses: softprops/action-gh-release@v2
@@ -39,30 +42,48 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to Zenodo (print DOI)
+      - name: Publish to Zenodo (mint DOI)
+        shell: bash
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-          ZENODO_SANDBOX: "false" # set "true" for sandbox.zenodo.org
-        shell: bash
+          ZENODO_SANDBOX: "false" # set to "true" for sandbox.zenodo.org
         run: |
           set -euo pipefail
-          API="https://zenodo.org/api"; [[ "$ZENODO_SANDBOX" == "true" ]] && API="https://sandbox.zenodo.org/api"
 
-          dep="$(curl -sS -X POST "$API/deposit/depositions" -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" -H "Content-Type: application/json" -d '{}')"
-          id="$(python -c "import json,sys; print(json.loads(sys.argv[1])['id'])" "$dep")"
-          bucket="$(python -c "import json,sys; print(json.loads(sys.argv[1])['links']['bucket'])" "$dep")"
+          API="https://zenodo.org/api"
+          if [[ "$ZENODO_SANDBOX" == "true" ]]; then
+            API="https://sandbox.zenodo.org/api"
+          fi
+          echo "Using Zenodo API: $API"
 
+          # Create deposition (draft)
+          curl -fsS -X POST "$API/deposit/depositions" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' > deposition.json
+
+          DEP_ID=$(python -c 'import json; print(json.load(open("deposition.json"))["id"])')
+          BUCKET=$(python -c 'import json; print(json.load(open("deposition.json"))["links"]["bucket"])')
+          echo "Created Zenodo deposition $DEP_ID"
+
+          # Minimal metadata required by Zenodo to publish
+          curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"metadata\": {\"title\": \"${GITHUB_REPOSITORY}\", \"upload_type\": \"software\", \"description\": \"Release ${GITHUB_REF_NAME}\", \"creators\": [{\"name\": \"Zhuowen Zhao\"}]}}" \
+            >/dev/null
+
+          # Upload artifacts
           for f in dist/*; do
-            curl -sS -X PUT "$bucket/$(basename "$f")" -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" --upload-file "$f" >/dev/null
+            echo "Uploading $(basename "$f")"
+            curl -fsS -X PUT "$BUCKET/$(basename "$f")" \
+              -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
+              --upload-file "$f" >/dev/null
           done
 
-          pub="$(curl -sS -X POST "$API/deposit/depositions/$id/actions/publish" -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN")"
-          python - <<'PY'
-          import json,sys
-          j=json.loads(sys.stdin.read())
-          doi=j.get("doi") or j.get("metadata",{}).get("doi") or j.get("metadata",{}).get("prereserve_doi",{}).get("doi")
-          url=j.get("links",{}).get("html") or j.get("record_url")
-          print("Zenodo published")
-          if doi: print("DOI:", doi)
-          if url: print("Record:", url)
-          PY <<<"$pub"
+          # Publish deposition (mints DOI)
+          curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" > published.json
+
+          # Print DOI + record URL
+          python -c 'import json; j=json.load(open("published.json")); doi=j.get("doi") or j.get("metadata",{}).get("doi") or j.get("metadata",{}).get("prereserve_doi",{}).get("doi"); url=j.get("links",{}).get("html") or j.get("record_url"); print("Zenodo published"); print("DOI:", doi) if doi else None; print("Record:", url) if url else None'

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topcup"
-version = "1.0.5"
+version = "1.0.6"
 description = "An implementation of 2024-2025 Kaggle/CZI cryoET ML challenge winning models"
 readme = "README.md"
 requires-python = ">=3.10"
