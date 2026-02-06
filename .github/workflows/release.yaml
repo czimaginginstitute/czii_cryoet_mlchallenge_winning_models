@@ -1,4 +1,5 @@
-name: Publish TopCUP to PyPI (API token)
+# .github/workflows/release.yml
+name: Release (PyPI tag publish + upload to Zenodo)
 
 on:
   push:
@@ -10,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  # 1) Build sanity check on all supported Python versions
+  # Optional: sanity-build on multiple Pythons (runs on tag pushes + manual runs)
   test-build:
     runs-on: ubuntu-latest
     strategy:
@@ -31,8 +32,8 @@ jobs:
           python -m pip install --upgrade build
           python -m build
 
-  # 2) Build once + publish to PyPI + upload to Zenodo (tagged releases only)
-  publish:
+  # Tag push only: build + upload to PyPI
+  publish-pypi:
     needs: test-build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -55,12 +56,6 @@ jobs:
         run: |
           python -m twine check dist/*
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*
-
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
@@ -68,13 +63,41 @@ jobs:
         run: |
           python -m twine upload dist/*
 
+  # Manual only: build + upload to Zenodo
+  upload-zenodo:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build distributions (for Zenodo)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade build
+          python -m build
+          ls -la dist
+
+      - name: Build file list for Zenodo
+        id: zenodo_files
+        shell: bash
+        run: |
+          files="$(ls -1 dist/* | tr '\n' ' ' | sed 's/ *$//')"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
       - name: Upload to Zenodo
         uses: zenodraft/action@0.13.3
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
         with:
-          # If you're versioning an existing deposition, set collection to that deposition id.
-          # If you want a brand new record, remove this line entirely.
-          # collection: "your-deposition-id"
-          filename: "dist/*"
+          filenames: ${{ steps.zenodo_files.outputs.files }}
           publish: true
+          # Optional knobs:
+          # sandbox: true
+          # concept: "your-concept-doi-or-record-id"
+          # metadata: ".zenodo.json"
+          # verbose: true
