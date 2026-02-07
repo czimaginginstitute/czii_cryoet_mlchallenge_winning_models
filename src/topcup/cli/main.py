@@ -160,6 +160,12 @@ class InferenceDataModule(pl.LightningDataModule):
     help="copick config file path"
 )
 @click.option(
+    "-bk", "--backbone", 
+    type=str, 
+    default="resnet34", 
+    help="Backbone model, can be from {efficientnet-b0, ..., efficientnet-b8, efficientnet-l2, resnet10, ..., resnet200}. Default is resnet34."
+)
+@click.option(
     "-tts", "--train_run_names", 
     type=str, 
     default="",
@@ -242,6 +248,7 @@ class InferenceDataModule(pl.LightningDataModule):
 def train(
     ctx,
     copick_config,
+    backbone,
     train_run_names,
     val_run_names,
     tomo_type,
@@ -296,7 +303,7 @@ def train(
             spatial_dims=3,    
             in_channels=1,
             out_channels=len(copick_pickable_objects),
-            backbone='resnet34',
+            backbone=backbone,
             pretrained=False
         )
         model = SegNet(        
