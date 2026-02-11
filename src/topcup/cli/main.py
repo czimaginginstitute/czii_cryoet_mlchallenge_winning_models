@@ -487,7 +487,7 @@ def calculate_score(
     val_df = val_df[val_df['experiment'].isin(submission['experiment'].unique())].copy()
     val_df['id'] = range(len(val_df))
 
-    start = time.time()
+    start = time()
     sc = score(
         val_df.copy(),
         submission.copy(),
@@ -498,7 +498,7 @@ def calculate_score(
         beta=4)
     
     print('all', sc)
-    print(f'The score calculation takes {time.time()-start} s to finish.')
+    print(f'The score calculation takes {time()-start} s to finish.')
 
 
 
