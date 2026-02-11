@@ -1,6 +1,6 @@
 # Legal
 
-## License for the octopi package
+## License for the TopCUP package
 
 This package is licensed under the MIT License:
 

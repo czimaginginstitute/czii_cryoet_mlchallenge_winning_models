@@ -1,0 +1,101 @@
+# .github/workflows/release.yml
+name: Release (PyPI + GitHub Release + Zenodo)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build & validate
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m twine upload dist/*
+
+      - name: Create GitHub Release (attach dist/*)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to Zenodo (uses .zenodo.json)
+        shell: bash
+        env:
+          ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
+          ZENODO_SANDBOX: "false" # set to "true" to use sandbox.zenodo.org
+        run: |
+          set -euo pipefail
+
+          API="https://zenodo.org/api"
+          if [[ "${ZENODO_SANDBOX}" == "true" ]]; then
+            API="https://sandbox.zenodo.org/api"
+          fi
+
+          # sanity checks
+          if [[ -z "${ZENODO_ACCESS_TOKEN:-}" ]]; then
+            echo "ERROR: ZENODO_API_TOKEN secret is missing"
+            exit 1
+          fi
+          if [[ ! -f .zenodo.json ]]; then
+            echo "ERROR: .zenodo.json not found at repo root"
+            exit 1
+          fi
+
+          # Create deposition (draft)
+          curl -fsS -X POST "$API/deposit/depositions" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' > deposition.json
+
+          DEP_ID=$(python -c 'import json; print(json.load(open("deposition.json"))["id"])')
+          BUCKET=$(python -c 'import json; print(json.load(open("deposition.json"))["links"]["bucket"])')
+          echo "Zenodo deposition id: $DEP_ID"
+
+          # Upload metadata from repo root .zenodo.json
+          curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d @.zenodo.json >/dev/null
+
+          # Upload artifacts (require at least one file in dist/)
+          shopt -s nullglob
+          files=(dist/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "ERROR: no files found in dist/ to upload"
+            exit 1
+          fi
+
+          for f in "${files[@]}"; do
+            echo "Uploading $(basename "$f")"
+            curl -fsS -X PUT "$BUCKET/$(basename "$f")" \
+              -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
+              --upload-file "$f" >/dev/null
+          done
+
+          # Publish deposition (mints DOI)
+          curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" >/dev/null
