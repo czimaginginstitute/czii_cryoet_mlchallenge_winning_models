@@ -145,6 +145,9 @@ def sliding_window(
         z_scale=[0.5, 0.5, 0.5], 
         verbose=False,
 ):
+    """
+    Return volume in shape [C, D, H, W]
+    """
     image_size = inputs.shape[-3:]
     scan_interval = _get_scan_interval(image_size, roi_size, num_spatial_dims=3, overlap=overlap)
     slices = dense_patch_slices(image_size, roi_size, scan_interval, return_slice=True)
