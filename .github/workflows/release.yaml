@@ -1,133 +1,57 @@
-# .github/workflows/release.yml
-name: Release (PyPI + GitHub + Zenodo) + Debug Secrets
+name: Publish TopCUP to PyPI (API token)
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  # 1) Build sanity check on all supported Python versions
+  test-build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Build
+      - name: Build check
         run: |
-          python -m pip install --upgrade pip build twine
+          python -m pip install --upgrade pip
+          python -m pip install build
           python -m build
-          python -m twine check dist/*
 
-      - name: Publish PyPI
+  # 2) Build once + publish to PyPI
+  publish:
+    needs: test-build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build (publish artifacts)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+          python -m build
+
+      - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload dist/*
-
-      - name: GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # --- DEBUG STEP: checks that secrets are actually present in THIS job context ---
-      - name: Debug Zenodo env (safe)
-        shell: bash
-        env:
-          ZENODO_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-          ZENODO_DEP_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
-          ZENODO_SANDBOX: "false"
         run: |
-          set -euo pipefail
-          echo "Runner: $RUNNER_OS"
-          echo "Ref: $GITHUB_REF"
-
-          echo "ZENODO_TOKEN set? $([[ -n "${ZENODO_TOKEN:-}" ]] && echo yes || echo no)"
-          echo "ZENODO_DEP_ID set? $([[ -n "${ZENODO_DEP_ID:-}" ]] && echo yes || echo no)"
-          echo "ZENODO_DEP_ID length: ${#ZENODO_DEP_ID}"
-          if [[ -n "${ZENODO_DEP_ID:-}" ]]; then
-            echo "ZENODO_DEP_ID masked: ${ZENODO_DEP_ID:0:3}***${ZENODO_DEP_ID: -3}"
-          fi
-
-          API="https://zenodo.org/api"
-          [[ "${ZENODO_SANDBOX}" == "true" ]] && API="https://sandbox.zenodo.org/api"
-
-          if [[ -n "${ZENODO_TOKEN:-}" && -n "${ZENODO_DEP_ID:-}" ]]; then
-            status=$(curl -sS -o /tmp/zenodo_body.txt -w "%{http_code}" \
-              -H "Authorization: Bearer $ZENODO_TOKEN" \
-              "$API/deposit/depositions/$ZENODO_DEP_ID" || true)
-            echo "Zenodo GET deposition status: $status"
-            echo "Body (first 200 chars):"
-            head -c 200 /tmp/zenodo_body.txt || true
-            echo
-          else
-            echo "Skipping Zenodo API check because token or dep id is missing."
-          fi
-
-      - name: Zenodo (new version under existing concept DOI)
-        shell: bash
-        env:
-          ZENODO_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-          ZENODO_DEP_ID: ${{ secrets.ZENODO_DEPOSITION_ID }} # must be deposit/deposition id (e.g. 18628331)
-          ZENODO_SANDBOX: "false"
-        run: |
-          set -euo pipefail
-          [[ -n "${ZENODO_TOKEN:-}" ]] || { echo "ERROR: ZENODO_API_TOKEN missing/empty"; exit 2; }
-          [[ -n "${ZENODO_DEP_ID:-}" ]] || { echo "ERROR: ZENODO_DEPOSITION_ID missing/empty"; exit 2; }
-          [[ -f .zenodo.json ]] || { echo "ERROR: .zenodo.json not found"; exit 2; }
-
-          API="https://zenodo.org/api"
-          [[ "${ZENODO_SANDBOX}" == "true" ]] && API="https://sandbox.zenodo.org/api"
-          AUTH=(-H "Authorization: Bearer $ZENODO_TOKEN")
-
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" .zenodo.json
-
-          # verify base deposition is accessible
-          curl -fsS "${AUTH[@]}" "$API/deposit/depositions/$ZENODO_DEP_ID" >/dev/null
-
-          # create new version draft (keeps same concept DOI)
-          curl -fsS -X POST "$API/deposit/depositions/$ZENODO_DEP_ID/actions/newversion" \
-            "${AUTH[@]}" -H "Content-Type: application/json" -d '{}' > nv.json
-
-          # fetch draft deposition info (id + bucket)
-          DRAFT_URL=$(python -c 'import json; print(json.load(open("nv.json"))["links"]["latest_draft"])')
-          curl -fsS "${AUTH[@]}" "$DRAFT_URL" > dep.json
-          DEP_ID=$(python -c 'import json; print(json.load(open("dep.json"))["id"])')
-          BUCKET=$(python -c 'import json; print(json.load(open("dep.json"))["links"]["bucket"])')
-
-          # update metadata
-          curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
-            "${AUTH[@]}" -H "Content-Type: application/json" -d @.zenodo.json >/dev/null
-
-          # delete files carried over from previous version
-          curl -fsS "${AUTH[@]}" "$API/deposit/depositions/$DEP_ID" | \
-            python -c 'import json,sys; [print(f["id"]) for f in json.load(sys.stdin).get("files",[])]' | \
-            while read -r fid; do
-              [[ -z "$fid" ]] && continue
-              curl -fsS -X DELETE "$API/deposit/depositions/$DEP_ID/files/$fid" "${AUTH[@]}" >/dev/null
-            done
-
-          # upload dist/*
-          shopt -s nullglob
-          files=(dist/*)
-          [[ ${#files[@]} -gt 0 ]] || { echo "ERROR: No dist/* to upload"; exit 2; }
-          for f in "${files[@]}"; do
-            curl -fsS -X PUT "$BUCKET/$(basename "$f")" "${AUTH[@]}" --upload-file "$f" >/dev/null
-          done
-
-          # publish
-          curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" "${AUTH[@]}" >/dev/null
-          echo "Zenodo: published version $VERSION under existing concept record."
+          twine upload dist/*
