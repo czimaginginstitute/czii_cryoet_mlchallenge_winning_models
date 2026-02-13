@@ -190,6 +190,55 @@ class SegNet(pl.LightningModule):
         return val_loss
 
 
+    # def predict_step(self, batch, batch_idx: int, dataloader_idx: int = 0):
+    #     import itertools
+        
+    #     if batch is None:
+    #         print(f"Skipping prediction batch {batch_idx} as it was None (empty after collation).")
+    #         return None
+
+    #     with torch.inference_mode():
+    #         img = batch["input"]  # [B, C, D, H, W]
+
+    #         # input spatial dims (D,H,W) in [B,C,D,H,W]
+    #         in_spatial = (2, 3, 4)
+    #         # output spatial dims (D,H,W) in [C,D,H,W]
+    #         out_spatial = (1, 2, 3)
+
+    #         # 8 flip combos INCLUDING no-flip
+    #         flip_pairs = []
+    #         for mask in itertools.product([0, 1], repeat=3):
+    #             dims_in = tuple(d for d, m in zip(in_spatial, mask) if m)     # e.g. (), (2,), (3,4) ...
+    #             dims_out = tuple(d for d, m in zip(out_spatial, mask) if m)   # e.g. (), (1,), (2,3) ...
+    #             flip_pairs.append((dims_in, dims_out))
+
+    #         preds = []
+    #         models = getattr(self, "models", [self])
+
+    #         for model in models:
+    #             model.eval()
+
+    #             p_sum = None
+    #             for dims_in, dims_out in flip_pairs:
+    #                 img_t = torch.flip(img, dims_in) if dims_in else img
+    #                 p, _ = sliding_window(inputs=img_t, predictor=model, n_classes=self.n_classes)  # [C,D,H,W]
+    #                 p = torch.flip(p, dims_out) if dims_out else p
+    #                 p_sum = p if p_sum is None else (p_sum + p)
+
+    #             p_avg = p_sum / 8.0
+    #             preds.append(p_avg)
+
+    #         pred = torch.stack(preds, dim=0).mean(dim=0)
+
+    #         if batch["dataset_type"] == "copick" and batch["has_ground_truth"]:
+    #             gt_df, submission_df = postprocess_pipeline_val(pred, batch["meta"])
+    #             self.gt_dfs.append(gt_df)
+    #         else:
+    #             submission_df = postprocess_pipeline_inference(pred, batch["meta"])
+
+    #         self.submission_dfs.append(submission_df)
+
+    
     def predict_step(self, batch, batch_idx: int, dataloader_idx: int=0):
         if batch is None:
             print(f"Skipping prediction batch {batch_idx} as it was None (empty after collation).")
