@@ -4,21 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topcup"
-version = "1.0.9"
+dynamic = ["version"]
 description = "An implementation of 2024-2025 Kaggle/CZI cryoET ML challenge winning models"
 readme = "README.md"
-requires-python = ">=3.10"
-license = "MIT"
-license-files = ["LICENSE"]
-
 authors = [
   { name = "Zhuowen Zhao", email = "kevin.zhao@biohub.org" },
   { name = "Christof Henkel", email = "chenkel@nvidia.com" },
   { name = "Eugene Khvedchenya", email = "ekhvedchenia@nvidia.com" },
 ]
+license = { text = "MIT" }
+requires-python = ">=3.10,<3.13"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
 
 # Optional but recommended metadata
-keywords = ["cryoet", "cryo-et","particle-picking", "machine-learning", "deep-learning"]
+keywords = ["cryoet","particle-picking", "machine-learning", "deep-learning"]
 
 dependencies = [
   "copick",
@@ -50,3 +57,6 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["topcup*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "topcup.__version__" }
