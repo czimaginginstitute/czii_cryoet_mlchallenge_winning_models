@@ -13,11 +13,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Build
         run: |
@@ -39,60 +41,57 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Zenodo (new version under existing concept)
+      - name: Zenodo (new version under existing concept DOI)
         shell: bash
         env:
           ZENODO_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-          ZENODO_DEP_ID: ${{ secrets.ZENODO_DEPOSITION_ID }} # e.g. 18628331
+          ZENODO_DEP_ID: ${{ secrets.ZENODO_DEPOSITION_ID }} # must be deposit/deposition id (e.g. 18628331)
           ZENODO_SANDBOX: "false"
         run: |
           set -euo pipefail
-          API="https://zenodo.org/api"; [[ "${ZENODO_SANDBOX}" == "true" ]] && API="https://sandbox.zenodo.org/api"
+          [[ -n "${ZENODO_TOKEN:-}" ]] || { echo "ERROR: ZENODO_API_TOKEN missing/empty"; exit 2; }
+          [[ -n "${ZENODO_DEP_ID:-}" ]] || { echo "ERROR: ZENODO_DEPOSITION_ID missing/empty"; exit 2; }
 
-          # sync version in .zenodo.json with git tag (strip leading v)
+          API="https://zenodo.org/api"
+          [[ "${ZENODO_SANDBOX}" == "true" ]] && API="https://sandbox.zenodo.org/api"
+          AUTH=(-H "Authorization: Bearer $ZENODO_TOKEN")
+
           VERSION="${GITHUB_REF#refs/tags/v}"
+          [[ -f .zenodo.json ]] || { echo "ERROR: .zenodo.json not found"; exit 2; }
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" .zenodo.json
 
-          # confirm base deposition exists + is accessible
-          curl -fsS -H "Authorization: Bearer $ZENODO_TOKEN" \
-            "$API/deposit/depositions/$ZENODO_DEP_ID" >/dev/null
+          # verify base deposition is accessible (fails early if ID/token wrong)
+          curl -fsS "${AUTH[@]}" "$API/deposit/depositions/$ZENODO_DEP_ID" >/dev/null
 
           # create new version draft (keeps same concept DOI)
           curl -fsS -X POST "$API/deposit/depositions/$ZENODO_DEP_ID/actions/newversion" \
-            -H "Authorization: Bearer $ZENODO_TOKEN" \
-            -H "Content-Type: application/json" -d '{}' > nv.json
+            "${AUTH[@]}" -H "Content-Type: application/json" -d '{}' > nv.json
 
-          # fetch draft deposition info (id + bucket)
           DRAFT_URL=$(python -c 'import json; print(json.load(open("nv.json"))["links"]["latest_draft"])')
-          curl -fsS -H "Authorization: Bearer '"$ZENODO_TOKEN"'" "$DRAFT_URL" > dep.json
+          curl -fsS "${AUTH[@]}" "$DRAFT_URL" > dep.json
           DEP_ID=$(python -c 'import json; print(json.load(open("dep.json"))["id"])')
           BUCKET=$(python -c 'import json; print(json.load(open("dep.json"))["links"]["bucket"])')
 
           # update metadata
           curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
-            -H "Authorization: Bearer $ZENODO_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d @.zenodo.json >/dev/null
+            "${AUTH[@]}" -H "Content-Type: application/json" -d @.zenodo.json >/dev/null
 
-          # delete carried-over files (draft starts with previous version's files)
-          curl -fsS -H "Authorization: Bearer $ZENODO_TOKEN" "$API/deposit/depositions/$DEP_ID" | \
+          # delete files carried over from previous version
+          curl -fsS "${AUTH[@]}" "$API/deposit/depositions/$DEP_ID" | \
             python -c 'import json,sys; [print(f["id"]) for f in json.load(sys.stdin).get("files",[])]' | \
             while read -r fid; do
               [[ -z "$fid" ]] && continue
-              curl -fsS -X DELETE "$API/deposit/depositions/$DEP_ID/files/$fid" \
-                -H "Authorization: Bearer $ZENODO_TOKEN" >/dev/null
+              curl -fsS -X DELETE "$API/deposit/depositions/$DEP_ID/files/$fid" "${AUTH[@]}" >/dev/null
             done
 
           # upload dist/*
           shopt -s nullglob
           files=(dist/*)
-          [[ ${#files[@]} -gt 0 ]] || { echo "No dist/*"; exit 1; }
+          [[ ${#files[@]} -gt 0 ]] || { echo "ERROR: No dist/* to upload"; exit 2; }
           for f in "${files[@]}"; do
-            curl -fsS -X PUT "$BUCKET/$(basename "$f")" \
-              -H "Authorization: Bearer $ZENODO_TOKEN" \
-              --upload-file "$f" >/dev/null
+            curl -fsS -X PUT "$BUCKET/$(basename "$f")" "${AUTH[@]}" --upload-file "$f" >/dev/null
           done
 
-          # publish (mints a new VERSION DOI under the same concept DOI)
-          curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" \
-            -H "Authorization: Bearer $ZENODO_TOKEN" >/dev/null
+          # publish (mints new version DOI under same concept DOI)
+          curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" "${AUTH[@]}" >/dev/null
+          echo "Zenodo: published version $VERSION under existing concept record."
