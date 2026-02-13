@@ -1,5 +1,5 @@
 # .github/workflows/release.yml
-name: Release (PyPI + GitHub Release + Zenodo versioned)
+name: Release (PyPI + GitHub Release + Zenodo)
 
 on:
   push:
@@ -12,7 +12,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +19,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12" 
 
       - name: Build & validate
         run: |
@@ -43,94 +42,57 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to Zenodo (new version under existing Concept DOI)
+      - name: Publish to Zenodo (New Version)
         shell: bash
         env:
           ZENODO_ACCESS_TOKEN: ${{ secrets.ZENODO_API_TOKEN }}
-          ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
-          ZENODO_SANDBOX: "false" # set to "true" to use sandbox.zenodo.org
+          EXISTING_DEP_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+          ZENODO_SANDBOX: "false" 
         run: |
           set -euo pipefail
 
-          API="https://zenodo.org/api"
+          API="https://zenodo.org"
           if [[ "${ZENODO_SANDBOX}" == "true" ]]; then
-            API="https://sandbox.zenodo.org/api"
+            API="https://sandbox.zenodo.org"
           fi
 
-          # sanity checks
-          if [[ -z "${ZENODO_ACCESS_TOKEN:-}" ]]; then
-            echo "ERROR: ZENODO_API_TOKEN secret is missing"
-            exit 1
-          fi
-          if [[ -z "${ZENODO_DEPOSITION_ID:-}" ]]; then
-            echo "ERROR: ZENODO_DEPOSITION_ID secret is missing (base deposition to version)"
-            exit 1
-          fi
-          if [[ ! -f .zenodo.json ]]; then
-            echo "ERROR: .zenodo.json not found at repo root"
-            exit 1
-          fi
+          # 1. Update version in .zenodo.json to match the Git tag (removes 'v' prefix)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" .zenodo.json
 
-          echo "Creating new Zenodo version from base deposition: ${ZENODO_DEPOSITION_ID}"
+          # 2. Request a new version draft
+          curl -fsS -X POST "$API/deposit/depositions/$EXISTING_DEP_ID/actions/newversion" \
+            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" > new_version.json
 
-          # Create a new version draft from the existing deposition (keeps same Concept DOI)
-          curl -fsS -X POST "$API/deposit/depositions/$ZENODO_DEPOSITION_ID/actions/newversion" \
-            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{}' > newversion.json
-
-          # Get the draft URL and fetch full deposition JSON to obtain id + bucket
-          LATEST_DRAFT_URL=$(python -c 'import json; print(json.load(open("newversion.json"))["links"]["latest_draft"])')
-
-          curl -fsS -X GET "$LATEST_DRAFT_URL" \
-            -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" > deposition.json
-
+          # 3. Get the new draft URL and its specific bucket
+          NEW_DEP_URL=$(python -c 'import json; print(json.load(open("new_version.json"))["links"]["latest_draft"])')
+          
+          curl -fsS -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" "$NEW_DEP_URL" > deposition.json
+          
           DEP_ID=$(python -c 'import json; print(json.load(open("deposition.json"))["id"])')
           BUCKET=$(python -c 'import json; print(json.load(open("deposition.json"))["links"]["bucket"])')
-          echo "Zenodo draft deposition id: $DEP_ID"
+          
+          echo "Targeting Deposition ID: $DEP_ID"
 
-          # OPTIONAL: remove files copied from previous version to avoid duplicates
-          python - <<'PY'
-          import json, sys
-          d = json.load(open("deposition.json"))
-          files = d.get("files", [])
-          if files:
-              print("Found existing files in draft (copied from previous version):")
-              for f in files:
-                  print(f["id"], f["filename"])
-          else:
-              print("No existing files in draft.")
-          PY
-
-          # Delete any existing files in the draft (copied from previous version)
-          FILE_IDS=$(python - <<'PY'
-          import json
-          d=json.load(open("deposition.json"))
-          for f in d.get("files", []):
-              print(f["id"])
-          PY
-          )
-
-          for fid in $FILE_IDS; do
-            echo "Deleting draft file id: $fid"
-            curl -fsS -X DELETE "$API/deposit/depositions/$DEP_ID/files/$fid" \
-              -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" >/dev/null
-          done
-
-          # Upload metadata from repo root .zenodo.json
+          # 4. Upload fresh metadata
           curl -fsS -X PUT "$API/deposit/depositions/$DEP_ID" \
             -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d @.zenodo.json >/dev/null
 
-          # Upload artifacts (require at least one file in dist/)
+          # 5. Clear old files if any (Newversion carries over files from previous)
+          # Fetch files currently in the draft
+          curl -fsS -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" "$API/deposit/depositions/$DEP_ID" | \
+          python -c 'import json, sys; [print(f["id"]) for f in json.load(sys.stdin)["files"]]' > old_files.txt
+          
+          while read file_id; do
+            curl -fsS -X DELETE "$API/deposit/depositions/$DEP_ID/files/$file_id" \
+              -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN"
+          done < old_files.txt
+
+          # 6. Upload new artifacts
           shopt -s nullglob
           files=(dist/*)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "ERROR: no files found in dist/ to upload"
-            exit 1
-          fi
-
           for f in "${files[@]}"; do
             echo "Uploading $(basename "$f")"
             curl -fsS -X PUT "$BUCKET/$(basename "$f")" \
@@ -138,8 +100,8 @@ jobs:
               --upload-file "$f" >/dev/null
           done
 
-          # Publish deposition (mints a new VERSION DOI under the SAME Concept DOI)
+          # 7. Finalize and Publish
           curl -fsS -X POST "$API/deposit/depositions/$DEP_ID/actions/publish" \
             -H "Authorization: Bearer $ZENODO_ACCESS_TOKEN" >/dev/null
-
-          echo "Zenodo published new version under existing concept record."
+          
+          echo "Successfully published version $VERSION to Zenodo."
