@@ -1,57 +1,42 @@
-name: Publish TopCUP to PyPI (API token)
+# .github/workflows/release.yml
+name: Release (PyPI + GitHub)
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  # 1) Build sanity check on all supported Python versions
-  test-build:
+  release:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Build check
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
-          python -m build
-
-  # 2) Build once + publish to PyPI
-  publish:
-    needs: test-build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Build (publish artifacts)
+      - name: Build
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build twine
+          python -m pip install --upgrade pip build twine
           python -m build
+          python -m twine check dist/*
 
-      - name: Publish to PyPI
+      - name: Publish PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          twine upload dist/*
+        run: python -m twine upload dist/*
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
