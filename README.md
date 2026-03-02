@@ -254,7 +254,7 @@ topcup inference \
 ```
 
 ### Convert csv picks to copick files
-Use command 'topcup csv2copick --help' to see all the options for creating copick picks from the csv output files:
+Use command `topcup csv2copick --help` to see all the options for creating copick picks from the csv output files:
 ```
 Usage: topcup csv2copick [OPTIONS]
 
@@ -269,7 +269,7 @@ Options:
 ```
 
 ### Score calculation
-Use command 'topcup score --help' to see all the options for calculating F-beta score for the predictions:
+Use command `topcup score --help` to see all the options for calculating F-beta score for the predictions:
 ```
 Usage: topcup score [OPTIONS]
 
