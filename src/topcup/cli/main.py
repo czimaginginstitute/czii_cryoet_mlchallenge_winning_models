@@ -508,4 +508,116 @@ def calculate_score(
     print(f'The score calculation takes {time()-start} s to finish.')
 
 
+@click.command(name="csv2copick")
+@click.option(
+    "-c", "--copick_config",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    required=True,   
+    help="copick config file path")
+@click.option(
+    "--csv_path", 
+    type=click.Path(exists=True, dir_okay=False, path_type=str), 
+    required=True, 
+    help="The csv file path"
+)
+@click.option(
+    "-u", "--user_id", 
+    type=str, 
+    default="copick", 
+    help="The user_id used for saving the conversion (default: copick)."
+)
+@click.option(
+    "-s", "--session_id", 
+    type=str, 
+    default="0", 
+    help="The session_id used for saving the conversion (default: 0)."
+)
+@click.pass_context
+def csv2copick(
+        ctx,
+        copick_config,
+        csv_path,
+        user_id,
+        session_id
+):
+    import argparse
+    import csv
+    from collections import defaultdict
 
+    from copick.impl.filesystem import CopickRootFSSpec
+    from copick.models import CopickPoint, CopickLocation
+    
+    def load_csv(csv_path: str) -> dict[str, dict[str, list[dict]]]:
+        """Load CSV and group rows by experiment and particle_type.
+
+        Returns:
+            Nested dict: experiment -> particle_type -> list of {x, y, z} dicts.
+        """
+        runs = defaultdict(lambda: defaultdict(list))
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                experiment = row["experiment"].strip()
+                particle_type = row["particle_type"].strip()
+                runs[experiment][particle_type].append(
+                    {
+                        "x": float(row["x"].strip()),
+                        "y": float(row["y"].strip()),
+                        "z": float(row["z"].strip()),
+                    }
+                )
+        return runs
+    
+    root = CopickRootFSSpec.from_file(copick_config)
+    obj_names = [obj.name for obj in root.config.pickable_objects]
+    runs_data = load_csv(csv_path)
+    print(f"Found {len(runs_data)} experiment(s) in CSV")
+
+    for run_name, particle_types in runs_data.items():
+        # Get or create the run
+        run = root.get_run(run_name)
+        if run is None:
+            print(f"  Creating new run: {run_name}")
+            run = root.new_run(run_name)
+        else:
+            print(f"  Using existing run: {run_name}")
+
+        for particle_type, locations in particle_types.items():
+            # Validate particle_type against config
+            if particle_type not in obj_names:
+                print(
+                    f"WARNING: particle_type '{particle_type}' not in config, "
+                    f"skipping {len(locations)} point(s). "
+                    f"Available objects: {obj_names}"
+                )
+                continue
+
+            # Create CopickPoint objects from the CSV coordinates
+            points = []
+            for loc in locations:
+                point = CopickPoint(
+                    location=CopickLocation(
+                        x=loc["x"],
+                        y=loc["y"],
+                        z=loc["z"],
+                    ),
+                )
+                points.append(point)
+
+            # Create a new picks object for this run and particle type
+            picks = run.new_picks(
+                object_name=particle_type,
+                session_id=session_id,
+                user_id=user_id,
+            )
+
+            # Assign points and save
+            picks.points = points
+            picks.store()
+
+            print(
+                f"Saved {len(points)} '{particle_type}' pick(s) "
+                f"for run '{run_name}'"
+            )
+
+    print("Done!")

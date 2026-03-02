@@ -117,7 +117,7 @@ def get_new_slices(slices, z_scale):
 
 def get_final_submission(
         submission: pd.DataFrame, 
-        score_thresholds: dict={}, 
+        score_thresholds: dict={},
         output_dir: str=''
     ) -> pd.DataFrame:
     submission_pp = []
