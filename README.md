@@ -12,10 +12,15 @@ We are able to train 3 models (resnet34 backbones) with 6, 12, and 24 tomograms 
 
 ## Installation
 ```
+pip install topcup
+```
+
+Or build from github:
+```
 pip install git+https://github.com/czimaginginstitute/czii_cryoet_mlchallenge_winning_models.git
 ```
 
-Or cd into the root folder, then 
+Or git clone the folder and cd into the root folder, then 
 ```
 pip install -e .
 ```
