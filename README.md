@@ -239,7 +239,7 @@ Class details:
 
 
 ### Inference
-Use command `topcup inference --help` to see all the options for the inference pipeline. An example command for inference with PyTorch checkpoints (a single checkpoint file path or multiple folder paths, each containing mutiple checkpoints) that supports pattern matching. 
+Use command `topcup inference --help` to see all the options for the inference pipeline. An example command for inference with PyTorch checkpoints (a single checkpoint file path or multiple folder paths, each containing mutiple checkpoints) that supports pattern matching. Output particle picks (locations) will be saved as a csv file in the output_dir.
 
 ```
 topcup inference \
@@ -251,6 +251,21 @@ topcup inference \
     --batch_size 16 \
     --output_dir OUTPUT_PATH \
     --pattern *v1.ckpt 
+```
+
+### Convert csv picks to copick files
+Use command 'topcup csv2copick --help' to see all the options for creating copick picks from the csv output files:
+```
+Usage: topcup csv2copick [OPTIONS]
+
+Options:
+  -c, --copick_config FILE  copick config file path  [required]
+  --csv_path FILE           The csv file path  [required]
+  -u, --user_id TEXT        The user_id used for saving the conversion
+                            (default: copick).
+  -s, --session_id TEXT     The session_id used for saving the conversion
+                            (default: 0).
+  -h, --help                Show this message and exit.
 ```
 
 ### Score calculation
