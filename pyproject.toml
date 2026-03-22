@@ -28,7 +28,7 @@ classifiers = [
 keywords = ["cryoet","particle-picking", "machine-learning", "deep-learning"]
 
 dependencies = [
-  "copick",
+  "copick<=1.17.0",
   "scikit-learn",
   "zarr==2.18.2",
   "numcodecs==0.11.0",
